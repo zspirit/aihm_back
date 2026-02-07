@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     EMAIL_FROM: str = "noreply@aihm.ai"
 
     # App
+    FRONTEND_URL: str = "http://localhost:5173"
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]
     MAX_CV_SIZE_MB: int = 10
     MAX_INTERVIEW_DURATION_SECONDS: int = 600

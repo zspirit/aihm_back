@@ -71,7 +71,7 @@ def send_consent_email(candidate_id: str):
         if not consent:
             return
 
-        consent_url = f"{settings.TWILIO_WEBHOOK_BASE_URL}/consent/{consent.token}"
+        consent_url = f"{settings.FRONTEND_URL}/consent/{consent.token}"
 
         html = f"""
         <h2>Invitation a un entretien telephonique IA</h2>
@@ -93,6 +93,10 @@ def send_consent_email(candidate_id: str):
             f"Entretien telephonique IA - {position.title} - {tenant.name}",
             html,
         )
+
+        candidate.pipeline_status = "invited"
+        session.commit()
+        logger.info("consent_email_sent", candidate_id=candidate_id, to=candidate.email)
 
     finally:
         session.close()

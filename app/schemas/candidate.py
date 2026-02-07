@@ -19,6 +19,7 @@ class CandidateResponse(BaseModel):
     cv_score_explanation: dict | None
     cv_parsed_data: dict | None
     pipeline_status: str
+    interview_id: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

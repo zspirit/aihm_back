@@ -51,10 +51,12 @@ def process_cv(self, candidate_id: str):
             score=score_result["score"],
         )
 
-        # Trigger question generation
+        # Trigger question generation + consent email
         from app.workers.question_generation import generate_questions
+        from app.workers.notifications import send_consent_email
 
         generate_questions.delay(candidate_id)
+        send_consent_email.delay(candidate_id)
 
     except Exception as e:
         session.rollback()

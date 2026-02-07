@@ -141,6 +141,17 @@ async def get_candidate(
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidat introuvable")
 
+    # Fetch latest interview for this candidate
+    from app.models.interview import Interview
+
+    interview_result = await db.execute(
+        select(Interview.id)
+        .where(Interview.candidate_id == candidate_id)
+        .order_by(Interview.created_at.desc())
+        .limit(1)
+    )
+    latest_interview_id = interview_result.scalar_one_or_none()
+
     return CandidateResponse(
         id=str(candidate.id),
         position_id=str(candidate.position_id),
@@ -152,6 +163,7 @@ async def get_candidate(
         cv_score_explanation=candidate.cv_score_explanation,
         cv_parsed_data=candidate.cv_parsed_data,
         pipeline_status=candidate.pipeline_status,
+        interview_id=str(latest_interview_id) if latest_interview_id else None,
         created_at=candidate.created_at,
     )
 
@@ -190,6 +202,16 @@ async def candidate_events(
                     )
                 )
                 candidate = result.scalar_one_or_none()
+                # Also fetch latest interview_id
+                from app.models.interview import Interview
+
+                iv_result = await db.execute(
+                    select(Interview.id)
+                    .where(Interview.candidate_id == candidate_id)
+                    .order_by(Interview.created_at.desc())
+                    .limit(1)
+                )
+                latest_iv_id = iv_result.scalar_one_or_none()
             if not candidate:
                 yield f"event: error\ndata: {json.dumps({'detail': 'Candidat introuvable'})}\n\n"
                 break
@@ -203,6 +225,7 @@ async def candidate_events(
                     "cv_score": candidate.cv_score,
                     "cv_score_explanation": candidate.cv_score_explanation,
                     "cv_parsed_data": candidate.cv_parsed_data,
+                    "interview_id": str(latest_iv_id) if latest_iv_id else None,
                 }
                 yield f"event: update\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
                 if candidate.pipeline_status in TERMINAL_STATUSES:
