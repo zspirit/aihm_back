@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import get_db, async_session
-from app.core.dependencies import get_current_user, get_tenant_id
+from app.core.dependencies import get_current_user, get_tenant_id, require_role
 from app.models.candidate import Candidate
 from app.models.consent import Consent
 from app.models.position import Position
@@ -72,7 +72,7 @@ async def create_candidate(
     email: str | None = Form(None),
     phone: str | None = Form(None),
     cv: UploadFile | None = File(None),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("admin", "recruiter")),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
@@ -159,11 +159,11 @@ async def get_candidate(
 @router.delete("/candidates/{candidate_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_candidate(
     candidate_id: UUID,
-    tenant_id: UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_role("admin", "recruiter")),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(Candidate).where(Candidate.id == candidate_id, Candidate.tenant_id == tenant_id)
+        select(Candidate).where(Candidate.id == candidate_id, Candidate.tenant_id == current_user.tenant_id)
     )
     candidate = result.scalar_one_or_none()
     if not candidate:

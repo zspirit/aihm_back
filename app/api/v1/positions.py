@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_user, get_tenant_id
+from app.core.dependencies import get_current_user, get_tenant_id, require_role
 from app.models.candidate import Candidate
 from app.models.position import Position
 from app.models.user import User
@@ -54,7 +54,7 @@ async def list_positions(
 @router.post("", response_model=PositionResponse, status_code=status.HTTP_201_CREATED)
 async def create_position(
     data: PositionCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("admin", "recruiter")),
     db: AsyncSession = Depends(get_db),
 ):
     position = Position(
@@ -122,11 +122,11 @@ async def get_position(
 async def update_position(
     position_id: UUID,
     data: PositionUpdate,
-    tenant_id: UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_role("admin", "recruiter")),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(Position).where(Position.id == position_id, Position.tenant_id == tenant_id)
+        select(Position).where(Position.id == position_id, Position.tenant_id == current_user.tenant_id)
     )
     position = result.scalar_one_or_none()
     if not position:
@@ -160,11 +160,11 @@ async def update_position(
 @router.delete("/{position_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_position(
     position_id: UUID,
-    tenant_id: UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_role("admin", "recruiter")),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(Position).where(Position.id == position_id, Position.tenant_id == tenant_id)
+        select(Position).where(Position.id == position_id, Position.tenant_id == current_user.tenant_id)
     )
     position = result.scalar_one_or_none()
     if not position:
