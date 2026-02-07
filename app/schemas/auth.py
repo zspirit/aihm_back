@@ -23,6 +23,13 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class InviteUserRequest(BaseModel):
+    email: EmailStr
+    full_name: str
+    password: str
+    role: str = "recruiter"
+
+
 class UserResponse(BaseModel):
     id: str
     email: str
