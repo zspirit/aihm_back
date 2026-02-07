@@ -1,12 +1,15 @@
+import asyncio
+import json
 import secrets
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.database import get_db
+from app.core.database import get_db, async_session
 from app.core.dependencies import get_current_user, get_tenant_id
 from app.models.candidate import Candidate
 from app.models.consent import Consent
@@ -14,6 +17,8 @@ from app.models.position import Position
 from app.models.user import User
 from app.schemas.candidate import CandidateListResponse, CandidateResponse
 from app.services.storage import upload_file
+
+TERMINAL_STATUSES = {"cv_analyzed", "evaluated", "call_done"}
 
 router = APIRouter(tags=["candidates"])
 settings = get_settings()
@@ -164,3 +169,49 @@ async def delete_candidate(
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidat introuvable")
     await db.delete(candidate)
+
+
+@router.get("/candidates/{candidate_id}/events")
+async def candidate_events(
+    candidate_id: UUID,
+    request: Request,
+    tenant_id: UUID = Depends(get_tenant_id),
+):
+    async def event_stream():
+        last_status = None
+        last_score = None
+        while True:
+            if await request.is_disconnected():
+                break
+            async with async_session() as db:
+                result = await db.execute(
+                    select(Candidate).where(
+                        Candidate.id == candidate_id, Candidate.tenant_id == tenant_id
+                    )
+                )
+                candidate = result.scalar_one_or_none()
+            if not candidate:
+                yield f"event: error\ndata: {json.dumps({'detail': 'Candidat introuvable'})}\n\n"
+                break
+            status_changed = candidate.pipeline_status != last_status
+            score_changed = candidate.cv_score != last_score
+            if status_changed or score_changed:
+                last_status = candidate.pipeline_status
+                last_score = candidate.cv_score
+                data = {
+                    "pipeline_status": candidate.pipeline_status,
+                    "cv_score": candidate.cv_score,
+                    "cv_score_explanation": candidate.cv_score_explanation,
+                    "cv_parsed_data": candidate.cv_parsed_data,
+                }
+                yield f"event: update\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+                if candidate.pipeline_status in TERMINAL_STATUSES:
+                    yield f"event: done\ndata: {json.dumps({'status': candidate.pipeline_status})}\n\n"
+                    break
+            await asyncio.sleep(3)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
