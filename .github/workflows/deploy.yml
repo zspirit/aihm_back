@@ -1,0 +1,22 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /opt/aihm/back && git pull origin main
+            cd /opt/aihm
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml build backend celery-worker
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d backend celery-worker
+            docker compose exec -T backend bash -c "cd /app && PYTHONPATH=/app alembic upgrade head"
