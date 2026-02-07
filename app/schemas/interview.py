@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 class InterviewCreate(BaseModel):
     scheduled_at: datetime | None = None
+    phone: str | None = None
 
 
 class InterviewResponse(BaseModel):

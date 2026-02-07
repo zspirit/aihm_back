@@ -168,6 +168,35 @@ async def get_candidate(
     )
 
 
+@router.post("/candidates/{candidate_id}/grant-consent")
+async def grant_consent_admin(
+    candidate_id: UUID,
+    current_user: User = Depends(require_role("admin", "recruiter")),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Candidate).where(Candidate.id == candidate_id, Candidate.tenant_id == current_user.tenant_id)
+    )
+    candidate = result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidat introuvable")
+
+    from datetime import datetime, timezone
+
+    consents_result = await db.execute(
+        select(Consent).where(Consent.candidate_id == candidate_id)
+    )
+    consents = consents_result.scalars().all()
+    for consent in consents:
+        if not consent.granted:
+            consent.granted = True
+            consent.granted_at = datetime.now(timezone.utc)
+            consent.channel = "admin"
+
+    candidate.pipeline_status = "consent_given"
+    return {"status": "ok", "consents_granted": len(consents)}
+
+
 @router.delete("/candidates/{candidate_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_candidate(
     candidate_id: UUID,

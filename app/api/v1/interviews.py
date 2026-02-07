@@ -41,6 +41,9 @@ async def schedule_interview(
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidat introuvable")
 
+    if data.phone:
+        candidate.phone = data.phone
+
     if not candidate.phone:
         raise HTTPException(status_code=400, detail="Le candidat n'a pas de numero de telephone")
 
