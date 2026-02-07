@@ -1,0 +1,166 @@
+import secrets
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import get_settings
+from app.core.database import get_db
+from app.core.dependencies import get_current_user, get_tenant_id
+from app.models.candidate import Candidate
+from app.models.consent import Consent
+from app.models.position import Position
+from app.models.user import User
+from app.schemas.candidate import CandidateListResponse, CandidateResponse
+from app.services.storage import upload_file
+
+router = APIRouter(tags=["candidates"])
+settings = get_settings()
+
+
+@router.get("/positions/{position_id}/candidates", response_model=list[CandidateListResponse])
+async def list_candidates(
+    position_id: UUID,
+    sort_by: str = "cv_score",
+    tenant_id: UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Position).where(Position.id == position_id, Position.tenant_id == tenant_id)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Poste introuvable")
+
+    query = select(Candidate).where(
+        Candidate.position_id == position_id,
+        Candidate.tenant_id == tenant_id,
+    )
+    if sort_by == "cv_score":
+        query = query.order_by(Candidate.cv_score.desc().nulls_last())
+    else:
+        query = query.order_by(Candidate.created_at.desc())
+
+    result = await db.execute(query)
+    return [
+        CandidateListResponse(
+            id=str(c.id),
+            name=c.name,
+            email=c.email,
+            phone=c.phone,
+            cv_score=c.cv_score,
+            pipeline_status=c.pipeline_status,
+            created_at=c.created_at,
+        )
+        for c in result.scalars().all()
+    ]
+
+
+@router.post(
+    "/positions/{position_id}/candidates",
+    response_model=CandidateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_candidate(
+    position_id: UUID,
+    name: str,
+    email: str | None = None,
+    phone: str | None = None,
+    cv: UploadFile | None = File(None),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Position).where(
+            Position.id == position_id, Position.tenant_id == current_user.tenant_id
+        )
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Poste introuvable")
+
+    cv_path = None
+    if cv:
+        cv_path = await upload_file(
+            cv, settings.S3_BUCKET_CVS, f"{current_user.tenant_id}/{position_id}"
+        )
+
+    candidate = Candidate(
+        tenant_id=current_user.tenant_id,
+        position_id=position_id,
+        name=name,
+        email=email,
+        phone=phone,
+        cv_file_path=cv_path,
+    )
+    db.add(candidate)
+    await db.flush()
+
+    for consent_type in ["data_processing", "call_recording"]:
+        consent = Consent(
+            candidate_id=candidate.id,
+            token=secrets.token_urlsafe(32),
+            type=consent_type,
+        )
+        db.add(consent)
+
+    if cv_path:
+        from app.workers.cv_processing import process_cv
+
+        process_cv.delay(str(candidate.id))
+
+    return CandidateResponse(
+        id=str(candidate.id),
+        position_id=str(candidate.position_id),
+        name=candidate.name,
+        email=candidate.email,
+        phone=candidate.phone,
+        cv_file_path=candidate.cv_file_path,
+        cv_score=candidate.cv_score,
+        cv_score_explanation=candidate.cv_score_explanation,
+        cv_parsed_data=candidate.cv_parsed_data,
+        pipeline_status=candidate.pipeline_status,
+        created_at=candidate.created_at,
+    )
+
+
+@router.get("/candidates/{candidate_id}", response_model=CandidateResponse)
+async def get_candidate(
+    candidate_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Candidate).where(Candidate.id == candidate_id, Candidate.tenant_id == tenant_id)
+    )
+    candidate = result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidat introuvable")
+
+    return CandidateResponse(
+        id=str(candidate.id),
+        position_id=str(candidate.position_id),
+        name=candidate.name,
+        email=candidate.email,
+        phone=candidate.phone,
+        cv_file_path=candidate.cv_file_path,
+        cv_score=candidate.cv_score,
+        cv_score_explanation=candidate.cv_score_explanation,
+        cv_parsed_data=candidate.cv_parsed_data,
+        pipeline_status=candidate.pipeline_status,
+        created_at=candidate.created_at,
+    )
+
+
+@router.delete("/candidates/{candidate_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_candidate(
+    candidate_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Candidate).where(Candidate.id == candidate_id, Candidate.tenant_id == tenant_id)
+    )
+    candidate = result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidat introuvable")
+    await db.delete(candidate)

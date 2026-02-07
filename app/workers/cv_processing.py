@@ -1,0 +1,206 @@
+import json
+import structlog
+from celery import shared_task
+
+logger = structlog.get_logger()
+
+
+def get_sync_session():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    sync_url = settings.DATABASE_URL.replace("+asyncpg", "")
+    engine = create_engine(sync_url)
+    return Session(engine)
+
+
+@shared_task(name="cv.process", bind=True, max_retries=3)
+def process_cv(self, candidate_id: str):
+    logger.info("cv_processing_start", candidate_id=candidate_id)
+
+    session = get_sync_session()
+    try:
+        from app.models.candidate import Candidate
+        from app.models.position import Position
+        from uuid import UUID
+
+        candidate = session.get(Candidate, UUID(candidate_id))
+        if not candidate or not candidate.cv_file_path:
+            logger.warning("cv_processing_skip", candidate_id=candidate_id, reason="no_cv")
+            return
+
+        position = session.get(Position, candidate.position_id)
+
+        # Parse CV
+        parsed_data = parse_cv_file(candidate.cv_file_path)
+        candidate.cv_parsed_data = parsed_data
+
+        # Score CV against position
+        score_result = score_cv(parsed_data, position)
+        candidate.cv_score = score_result["score"]
+        candidate.cv_score_explanation = score_result["explanation"]
+        candidate.pipeline_status = "cv_analyzed"
+
+        session.commit()
+        logger.info(
+            "cv_processing_done",
+            candidate_id=candidate_id,
+            score=score_result["score"],
+        )
+
+        # Trigger question generation
+        from app.workers.question_generation import generate_questions
+
+        generate_questions.delay(candidate_id)
+
+    except Exception as e:
+        session.rollback()
+        logger.error("cv_processing_error", candidate_id=candidate_id, error=str(e))
+        raise self.retry(exc=e, countdown=30)
+    finally:
+        session.close()
+
+
+def parse_cv_file(file_path: str) -> dict:
+    from app.services.storage import download_file
+
+    parts = file_path.split("/", 1)
+    content = download_file(parts[0], parts[1])
+
+    ext = file_path.rsplit(".", 1)[-1].lower()
+    if ext == "pdf":
+        return parse_pdf(content)
+    elif ext in ("docx", "doc"):
+        return parse_docx(content)
+    else:
+        return {"raw_text": content.decode("utf-8", errors="ignore")}
+
+
+def parse_pdf(content: bytes) -> dict:
+    import fitz
+
+    doc = fitz.open(stream=content, filetype="pdf")
+    text = ""
+    for page in doc:
+        text += page.get_text()
+    doc.close()
+    return extract_structured_data(text)
+
+
+def parse_docx(content: bytes) -> dict:
+    from io import BytesIO
+
+    from docx import Document
+
+    doc = Document(BytesIO(content))
+    text = "\n".join([para.text for para in doc.paragraphs])
+    return extract_structured_data(text)
+
+
+def extract_structured_data(text: str) -> dict:
+    from anthropic import Anthropic
+
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+
+    response = client.messages.create(
+        model=settings.ANTHROPIC_MODEL,
+        max_tokens=1500,
+        messages=[
+            {
+                "role": "user",
+                "content": f"""Extrais les informations structurees de ce CV. Reponds UNIQUEMENT en JSON valide.
+
+CV:
+{text[:4000]}
+
+Format JSON attendu:
+{{
+    "name": "nom complet",
+    "email": "email",
+    "phone": "telephone",
+    "skills": ["competence1", "competence2"],
+    "experience_years": 0,
+    "experiences": [
+        {{"title": "poste", "company": "entreprise", "duration": "duree", "description": "resume"}}
+    ],
+    "education": [
+        {{"degree": "diplome", "school": "ecole", "year": "annee"}}
+    ],
+    "languages": ["francais", "anglais"],
+    "summary": "resume en 2-3 phrases"
+}}""",
+            }
+        ],
+    )
+
+    try:
+        text_content = response.content[0].text
+        # Extract JSON from response
+        if "```json" in text_content:
+            text_content = text_content.split("```json")[1].split("```")[0]
+        elif "```" in text_content:
+            text_content = text_content.split("```")[1].split("```")[0]
+        return json.loads(text_content.strip())
+    except (json.JSONDecodeError, IndexError):
+        return {"raw_text": text[:2000], "parse_error": True}
+
+
+def score_cv(parsed_data: dict, position) -> dict:
+    from anthropic import Anthropic
+
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+
+    response = client.messages.create(
+        model=settings.ANTHROPIC_MODEL,
+        max_tokens=1000,
+        messages=[
+            {
+                "role": "user",
+                "content": f"""Evalue ce CV par rapport a cette fiche de poste. Reponds UNIQUEMENT en JSON.
+
+FICHE DE POSTE:
+- Titre: {position.title}
+- Description: {position.description[:1000]}
+- Competences requises: {json.dumps(position.required_skills)}
+- Niveau: {position.seniority_level}
+
+CV PARSE:
+{json.dumps(parsed_data, ensure_ascii=False)[:2000]}
+
+REGLES STRICTES:
+- Score de 0 a 100, base sur des criteres observables uniquement
+- PAS d'inference de personnalite ou de motivation
+- PAS de recommandation d'embauche
+- Justifie chaque sous-score par des elements factuels du CV
+
+Format JSON:
+{{
+    "score": 75,
+    "explanation": {{
+        "skills_match": {{"score": 80, "matched": ["skill1"], "missing": ["skill2"], "justification": "..."}},
+        "experience_match": {{"score": 70, "justification": "..."}},
+        "education_match": {{"score": 75, "justification": "..."}}
+    }}
+}}""",
+            }
+        ],
+    )
+
+    try:
+        text_content = response.content[0].text
+        if "```json" in text_content:
+            text_content = text_content.split("```json")[1].split("```")[0]
+        elif "```" in text_content:
+            text_content = text_content.split("```")[1].split("```")[0]
+        return json.loads(text_content.strip())
+    except (json.JSONDecodeError, IndexError):
+        return {"score": 0, "explanation": {"error": "Scoring failed"}}
