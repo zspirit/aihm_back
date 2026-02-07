@@ -1,4 +1,6 @@
 from datetime import datetime
+from typing import Any
+
 from pydantic import BaseModel
 
 
@@ -15,7 +17,7 @@ class InterviewResponse(BaseModel):
     started_at: datetime | None
     ended_at: datetime | None
     duration_seconds: int | None
-    questions_asked: dict | None
+    questions_asked: list | dict | None
     attempt_number: int
     created_at: datetime
 
@@ -26,7 +28,7 @@ class TranscriptionResponse(BaseModel):
     id: str
     interview_id: str
     full_text: str
-    segments: dict | None
+    segments: Any = None
     language_detected: str | None
     confidence_score: float | None
 
@@ -36,11 +38,11 @@ class TranscriptionResponse(BaseModel):
 class AnalysisResponse(BaseModel):
     id: str
     interview_id: str
-    skills_extracted: dict | None
-    experience_examples: dict | None
-    communication_indicators: dict | None
-    scores: dict | None
-    score_explanations: dict | None
+    skills_extracted: Any = None
+    experience_examples: Any = None
+    communication_indicators: Any = None
+    scores: Any = None
+    score_explanations: Any = None
 
     model_config = {"from_attributes": True}
 
