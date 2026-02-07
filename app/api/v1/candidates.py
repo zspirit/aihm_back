@@ -1,7 +1,7 @@
 import secrets
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -63,9 +63,9 @@ async def list_candidates(
 )
 async def create_candidate(
     position_id: UUID,
-    name: str,
-    email: str | None = None,
-    phone: str | None = None,
+    name: str = Form(...),
+    email: str | None = Form(None),
+    phone: str | None = Form(None),
     cv: UploadFile | None = File(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
