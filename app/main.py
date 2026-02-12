@@ -89,6 +89,7 @@ from app.api.v1.consent import router as consent_router
 from app.api.v1.interviews import router as interviews_router
 from app.api.v1.positions import router as positions_router
 from app.api.v1.webhooks import router as webhooks_router
+from app.api.v1.webhooks_config import router as webhooks_config_router
 
 app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
 app.include_router(positions_router, prefix=settings.API_V1_PREFIX)
@@ -96,6 +97,7 @@ app.include_router(candidates_router, prefix=settings.API_V1_PREFIX)
 app.include_router(interviews_router, prefix=settings.API_V1_PREFIX)
 app.include_router(consent_router, prefix=settings.API_V1_PREFIX)
 app.include_router(webhooks_router, prefix=settings.API_V1_PREFIX)
+app.include_router(webhooks_config_router, prefix=settings.API_V1_PREFIX)
 app.include_router(analytics_router, prefix=settings.API_V1_PREFIX)
 
 

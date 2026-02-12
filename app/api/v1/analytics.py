@@ -1,6 +1,9 @@
+import csv
+import io
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -100,3 +103,46 @@ async def positions_stats(
         }
         for row in result.all()
     ]
+
+
+@router.get("/export")
+async def export_csv(
+    tenant_id: UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export all candidates with scores as CSV."""
+    result = await db.execute(
+        select(
+            Candidate.name,
+            Candidate.email,
+            Candidate.phone,
+            Candidate.cv_score,
+            Candidate.pipeline_status,
+            Candidate.created_at,
+            Position.title.label("position"),
+        )
+        .join(Position, Position.id == Candidate.position_id)
+        .where(Candidate.tenant_id == tenant_id)
+        .order_by(Candidate.created_at.desc())
+    )
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["Nom", "Email", "Telephone", "Score CV", "Statut", "Poste", "Date"])
+    for row in result.all():
+        writer.writerow([
+            row.name,
+            row.email or "",
+            row.phone or "",
+            row.cv_score if row.cv_score is not None else "",
+            row.pipeline_status,
+            row.position,
+            row.created_at.strftime("%Y-%m-%d %H:%M") if row.created_at else "",
+        ])
+
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=aihm_export.csv"},
+    )

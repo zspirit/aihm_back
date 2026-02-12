@@ -8,6 +8,7 @@ from app.models.report import Report
 from app.models.tenant import Tenant
 from app.models.transcription import Transcription
 from app.models.user import User
+from app.models.webhook_subscription import WebhookSubscription
 
 __all__ = [
     "Tenant",
@@ -20,4 +21,5 @@ __all__ = [
     "Analysis",
     "Report",
     "AuditLog",
+    "WebhookSubscription",
 ]
