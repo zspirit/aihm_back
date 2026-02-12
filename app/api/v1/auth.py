@@ -12,6 +12,7 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
+from app.models.audit_log import AuditLog
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.schemas.auth import (
@@ -24,6 +25,7 @@ from app.schemas.auth import (
     UpdateProfileRequest,
     UserResponse,
 )
+from app.services.audit import log_action
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -49,6 +51,15 @@ async def register(request: Request, data: RegisterRequest, db: AsyncSession = D
     db.add(user)
     await db.flush()
 
+    await log_action(
+        db,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        action="register",
+        entity_type="user",
+        entity_id=str(user.id),
+    )
+
     token_data = {"sub": str(user.id), "tenant_id": str(tenant.id), "role": user.role}
     return TokenResponse(
         access_token=create_access_token(token_data),
@@ -63,6 +74,15 @@ async def login(request: Request, data: LoginRequest, db: AsyncSession = Depends
     user = result.scalar_one_or_none()
     if not user or not verify_password(data.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect")
+
+    await log_action(
+        db,
+        tenant_id=user.tenant_id,
+        user_id=user.id,
+        action="login",
+        entity_type="user",
+        entity_id=str(user.id),
+    )
 
     token_data = {"sub": str(user.id), "tenant_id": str(user.tenant_id), "role": user.role}
     return TokenResponse(
@@ -125,6 +145,16 @@ async def invite_user(
     db.add(user)
     await db.flush()
 
+    await log_action(
+        db,
+        tenant_id=current_user.tenant_id,
+        user_id=current_user.id,
+        action="invite_user",
+        entity_type="user",
+        entity_id=str(user.id),
+        details={"email": data.email, "role": data.role},
+    )
+
     return UserResponse(
         id=str(user.id),
         email=user.email,
@@ -161,9 +191,7 @@ async def update_profile(
     if data.full_name is not None:
         current_user.full_name = data.full_name
     if data.email is not None and data.email != current_user.email:
-        existing = await db.execute(
-            select(User).where(User.email == data.email)
-        )
+        existing = await db.execute(select(User).where(User.email == data.email))
         if existing.scalar_one_or_none():
             raise HTTPException(status_code=400, detail="Email deja utilise")
         current_user.email = data.email
@@ -181,14 +209,53 @@ async def update_profile(
 async def change_password(
     data: ChangePasswordRequest,
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     if not verify_password(data.current_password, current_user.password_hash):
-        raise HTTPException(
-            status_code=400, detail="Mot de passe actuel incorrect"
-        )
+        raise HTTPException(status_code=400, detail="Mot de passe actuel incorrect")
     if len(data.new_password) < 8:
         raise HTTPException(
-            status_code=400, detail="Le nouveau mot de passe doit faire au moins 8 caracteres"
+            status_code=400,
+            detail="Le nouveau mot de passe doit faire au moins 8 caracteres",
         )
     current_user.password_hash = hash_password(data.new_password)
+
+    await log_action(
+        db,
+        tenant_id=current_user.tenant_id,
+        user_id=current_user.id,
+        action="change_password",
+        entity_type="user",
+        entity_id=str(current_user.id),
+    )
+
     return {"status": "ok"}
+
+
+@router.get("/audit-logs")
+async def get_audit_logs(
+    limit: int = 50,
+    offset: int = 0,
+    current_user: User = Depends(require_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(AuditLog)
+        .where(AuditLog.tenant_id == current_user.tenant_id)
+        .order_by(AuditLog.created_at.desc())
+        .offset(offset)
+        .limit(min(limit, 100))
+    )
+    logs = result.scalars().all()
+    return [
+        {
+            "id": str(log.id),
+            "user_id": str(log.user_id) if log.user_id else None,
+            "action": log.action,
+            "entity_type": log.entity_type,
+            "entity_id": log.entity_id,
+            "details": log.details,
+            "created_at": log.created_at.isoformat(),
+        }
+        for log in logs
+    ]

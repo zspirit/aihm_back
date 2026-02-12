@@ -1,0 +1,24 @@
+{% extends "email/base.html" %}
+{% block content %}
+<h2>Invitation a un entretien telephonique</h2>
+<p>Bonjour {{ candidate_name }},</p>
+<p>{{ tenant_name }} souhaite vous proposer un entretien telephonique assiste par IA
+pour le poste de <strong>{{ position_title }}</strong>.</p>
+
+<div class="info-box">
+  <p><strong>Duree estimee :</strong> 5 a 10 minutes</p>
+  <p><strong>Format :</strong> Un assistant IA vous posera des questions sur votre parcours et vos competences</p>
+  <p><strong>Enregistrement :</strong> L'appel sera enregistre pour analyse</p>
+</div>
+
+<p>Pour accepter et planifier votre entretien, cliquez ci-dessous :</p>
+<p style="text-align: center;">
+  <a href="{{ consent_url }}" class="btn">Accepter et planifier</a>
+</p>
+
+<hr class="divider">
+<p style="font-size: 13px; color: #6B7280;">
+  Vous pouvez refuser a tout moment. Vos donnees sont traitees conformement
+  a la loi 09-08 relative a la protection des donnees personnelles.
+</p>
+{% endblock %}

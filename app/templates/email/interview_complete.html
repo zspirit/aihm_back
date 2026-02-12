@@ -1,0 +1,15 @@
+{% extends "email/base.html" %}
+{% block content %}
+<h2>Entretien termine</h2>
+<p>Bonjour {{ candidate_name }},</p>
+<p>Votre entretien telephonique pour le poste de <strong>{{ position_title }}</strong>
+chez {{ tenant_name }} a bien ete enregistre.</p>
+
+<div class="info-box">
+  <p><strong>Duree :</strong> {{ duration }}</p>
+  <p><strong>Statut :</strong> Entretien termine avec succes</p>
+</div>
+
+<p>L'equipe de recrutement analysera vos reponses et reviendra vers vous prochainement.</p>
+<p>Merci pour votre temps et votre interet pour ce poste.</p>
+{% endblock %}

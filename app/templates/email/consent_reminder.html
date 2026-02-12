@@ -1,0 +1,18 @@
+{% extends "email/base.html" %}
+{% block content %}
+<h2>Rappel : entretien en attente</h2>
+<p>Bonjour {{ candidate_name }},</p>
+<p>Nous vous avons invite a un entretien telephonique pour le poste de
+<strong>{{ position_title }}</strong> chez {{ tenant_name }}.</p>
+<p>Votre consentement est toujours en attente. L'entretien ne prend que 5 a 10 minutes.</p>
+
+<p style="text-align: center;">
+  <a href="{{ consent_url }}" class="btn">Accepter et planifier</a>
+</p>
+
+<hr class="divider">
+<p style="font-size: 13px; color: #6B7280;">
+  Si vous ne souhaitez pas participer, vous pouvez ignorer cet email.
+  Aucun appel ne sera effectue sans votre accord.
+</p>
+{% endblock %}

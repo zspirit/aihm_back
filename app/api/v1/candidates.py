@@ -29,6 +29,7 @@ from app.models.consent import Consent
 from app.models.position import Position
 from app.models.user import User
 from app.schemas.candidate import CandidateListResponse, CandidateResponse, PaginatedCandidates
+from app.services.audit import log_action
 from app.services.storage import upload_file
 
 TERMINAL_STATUSES = {"cv_analyzed", "evaluated", "call_done"}
@@ -365,6 +366,17 @@ async def delete_candidate(
     candidate = result.scalar_one_or_none()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidat introuvable")
+
+    await log_action(
+        db,
+        tenant_id=current_user.tenant_id,
+        user_id=current_user.id,
+        action="delete_candidate",
+        entity_type="candidate",
+        entity_id=str(candidate_id),
+        details={"name": candidate.name, "email": candidate.email},
+    )
+
     await db.delete(candidate)
 
 
