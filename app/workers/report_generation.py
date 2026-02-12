@@ -44,15 +44,18 @@ def generate_report(self, interview_id: str):
 
         report_content = build_report(candidate, position, interview, analysis, transcription)
 
+        pdf_path = _generate_and_upload_pdf(report_content, interview_id)
+
         report = Report(
             candidate_id=candidate.id,
             interview_id=interview.id,
             content=report_content,
+            pdf_file_path=pdf_path,
         )
         session.add(report)
         session.commit()
 
-        logger.info("report_generation_done", interview_id=interview_id)
+        logger.info("report_generation_done", interview_id=interview_id, pdf_path=pdf_path)
 
     except Exception as e:
         session.rollback()
@@ -60,6 +63,32 @@ def generate_report(self, interview_id: str):
         raise self.retry(exc=e, countdown=30)
     finally:
         session.close()
+
+
+def _generate_and_upload_pdf(content: dict, interview_id: str) -> str | None:
+    """Generate PDF and upload to MinIO. Returns the file path or None on error."""
+    try:
+        from app.core.config import get_settings
+        from app.services.pdf_report import generate_pdf
+        from app.services.storage import ensure_bucket, s3_client
+
+        settings = get_settings()
+        pdf_bytes = generate_pdf(content)
+
+        bucket = settings.S3_BUCKET_REPORTS
+        ensure_bucket(bucket)
+        key = f"{interview_id}.pdf"
+        s3_client.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=pdf_bytes,
+            ContentType="application/pdf",
+        )
+        logger.info("pdf_uploaded", bucket=bucket, key=key, size=len(pdf_bytes))
+        return f"{bucket}/{key}"
+    except Exception as e:
+        logger.warning("pdf_generation_failed", interview_id=interview_id, error=str(e))
+        return None
 
 
 def build_report(candidate, position, interview, analysis, transcription) -> dict:

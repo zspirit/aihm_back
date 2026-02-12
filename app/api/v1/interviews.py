@@ -257,18 +257,29 @@ async def download_report_pdf(
 
     report_result = await db.execute(select(Report).where(Report.interview_id == interview_id))
     report = report_result.scalar_one_or_none()
-    if not report or not report.pdf_file_path:
-        raise HTTPException(status_code=404, detail="Rapport PDF non disponible")
+    if not report or not report.content:
+        raise HTTPException(status_code=404, detail="Rapport non disponible")
 
-    parts = report.pdf_file_path.split("/", 1)
-    if len(parts) != 2:
-        raise HTTPException(status_code=404, detail="Chemin PDF invalide")
+    # Try to serve existing PDF from storage
+    if report.pdf_file_path:
+        parts = report.pdf_file_path.split("/", 1)
+        if len(parts) == 2:
+            try:
+                data = download_file(parts[0], parts[1])
+                return Response(
+                    content=data,
+                    media_type="application/pdf",
+                    headers={
+                        "Content-Disposition": f'attachment; filename="rapport_{interview_id}.pdf"'
+                    },
+                )
+            except Exception:
+                pass
 
-    try:
-        data = download_file(parts[0], parts[1])
-    except Exception:
-        raise HTTPException(status_code=404, detail="Fichier PDF introuvable")
+    # Fallback: generate PDF on-the-fly from JSON content
+    from app.services.pdf_report import generate_pdf
 
+    data = generate_pdf(report.content)
     return Response(
         content=data,
         media_type="application/pdf",
