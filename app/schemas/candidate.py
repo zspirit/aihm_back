@@ -35,3 +35,10 @@ class CandidateListResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class PaginatedCandidates(BaseModel):
+    items: list[CandidateListResponse]
+    total: int
+    page: int
+    page_size: int

@@ -35,3 +35,10 @@ class PositionResponse(BaseModel):
     candidate_count: int = 0
 
     model_config = {"from_attributes": True}
+
+
+class PaginatedPositions(BaseModel):
+    items: list[PositionResponse]
+    total: int
+    page: int
+    page_size: int

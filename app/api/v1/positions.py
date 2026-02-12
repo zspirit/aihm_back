@@ -1,7 +1,7 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -9,21 +9,44 @@ from app.core.dependencies import get_current_user, get_tenant_id, require_role
 from app.models.candidate import Candidate
 from app.models.position import Position
 from app.models.user import User
-from app.schemas.position import PositionCreate, PositionResponse, PositionUpdate
+from app.schemas.position import (
+    PaginatedPositions,
+    PositionCreate,
+    PositionResponse,
+    PositionUpdate,
+)
 
 router = APIRouter(prefix="/positions", tags=["positions"])
 
 
-@router.get("", response_model=list[PositionResponse])
+@router.get("", response_model=PaginatedPositions)
 async def list_positions(
     status_filter: str | None = None,
+    search: str | None = Query(None, description="Search in title and description"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     tenant_id: UUID = Depends(get_tenant_id),
     db: AsyncSession = Depends(get_db),
 ):
     query = select(Position).where(Position.tenant_id == tenant_id)
+    count_query = select(func.count()).select_from(Position).where(Position.tenant_id == tenant_id)
+
     if status_filter:
         query = query.where(Position.status == status_filter)
+        count_query = count_query.where(Position.status == status_filter)
+
+    if search:
+        search_filter = or_(
+            Position.title.ilike(f"%{search}%"),
+            Position.description.ilike(f"%{search}%"),
+        )
+        query = query.where(search_filter)
+        count_query = count_query.where(search_filter)
+
+    total = (await db.execute(count_query)).scalar()
+
     query = query.order_by(Position.created_at.desc())
+    query = query.offset((page - 1) * page_size).limit(page_size)
 
     result = await db.execute(query)
     positions = result.scalars().all()
@@ -48,7 +71,13 @@ async def list_positions(
             candidate_count=count,
         )
         responses.append(resp)
-    return responses
+
+    return PaginatedPositions(
+        items=responses,
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.post("", response_model=PositionResponse, status_code=status.HTTP_201_CREATED)

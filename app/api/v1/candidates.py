@@ -3,9 +3,9 @@ import json
 import secrets
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -15,7 +15,7 @@ from app.models.candidate import Candidate
 from app.models.consent import Consent
 from app.models.position import Position
 from app.models.user import User
-from app.schemas.candidate import CandidateListResponse, CandidateResponse
+from app.schemas.candidate import CandidateListResponse, CandidateResponse, PaginatedCandidates
 from app.services.storage import upload_file
 
 TERMINAL_STATUSES = {"cv_analyzed", "evaluated", "call_done"}
@@ -24,10 +24,14 @@ router = APIRouter(tags=["candidates"])
 settings = get_settings()
 
 
-@router.get("/positions/{position_id}/candidates", response_model=list[CandidateListResponse])
+@router.get("/positions/{position_id}/candidates", response_model=PaginatedCandidates)
 async def list_candidates(
     position_id: UUID,
     sort_by: str = "cv_score",
+    search: str | None = Query(None, description="Search by name or email"),
+    status_filter: str | None = Query(None, description="Filter by pipeline status"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     tenant_id: UUID = Depends(get_tenant_id),
     db: AsyncSession = Depends(get_db),
 ):
@@ -41,13 +45,34 @@ async def list_candidates(
         Candidate.position_id == position_id,
         Candidate.tenant_id == tenant_id,
     )
+    count_query = select(func.count()).select_from(Candidate).where(
+        Candidate.position_id == position_id,
+        Candidate.tenant_id == tenant_id,
+    )
+
+    if search:
+        search_filter = or_(
+            Candidate.name.ilike(f"%{search}%"),
+            Candidate.email.ilike(f"%{search}%"),
+        )
+        query = query.where(search_filter)
+        count_query = count_query.where(search_filter)
+
+    if status_filter:
+        query = query.where(Candidate.pipeline_status == status_filter)
+        count_query = count_query.where(Candidate.pipeline_status == status_filter)
+
+    total = (await db.execute(count_query)).scalar()
+
     if sort_by == "cv_score":
         query = query.order_by(Candidate.cv_score.desc().nulls_last())
     else:
         query = query.order_by(Candidate.created_at.desc())
 
+    query = query.offset((page - 1) * page_size).limit(page_size)
+
     result = await db.execute(query)
-    return [
+    items = [
         CandidateListResponse(
             id=str(c.id),
             name=c.name,
@@ -59,6 +84,13 @@ async def list_candidates(
         )
         for c in result.scalars().all()
     ]
+
+    return PaginatedCandidates(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.post(
@@ -141,7 +173,6 @@ async def get_candidate(
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidat introuvable")
 
-    # Fetch latest interview for this candidate
     from app.models.interview import Interview
 
     interview_result = await db.execute(
@@ -231,7 +262,6 @@ async def candidate_events(
                     )
                 )
                 candidate = result.scalar_one_or_none()
-                # Also fetch latest interview_id
                 from app.models.interview import Interview
 
                 iv_result = await db.execute(
