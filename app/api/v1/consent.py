@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.rate_limit import limiter
 from app.models.candidate import Candidate
 from app.models.consent import Consent
 from app.models.position import Position
@@ -49,6 +50,7 @@ async def get_consent_page(token: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/{token}", response_model=ConsentResponse)
+@limiter.limit("10/minute")
 async def grant_consent(
     token: str,
     data: ConsentGrantRequest,

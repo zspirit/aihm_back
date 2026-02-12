@@ -1,3 +1,4 @@
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -22,6 +23,21 @@ class Base(DeclarativeBase):
 async def get_db() -> AsyncSession:
     async with async_session() as session:
         try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
+async def get_db_with_tenant(tenant_id: str) -> AsyncSession:
+    """Get a DB session with RLS tenant context set."""
+    async with async_session() as session:
+        try:
+            await session.execute(
+                text("SET LOCAL app.current_tenant_id = :tid"),
+                {"tid": tenant_id},
+            )
             yield session
             await session.commit()
         except Exception:
