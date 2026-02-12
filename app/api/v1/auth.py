@@ -15,11 +15,13 @@ from app.core.security import (
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.schemas.auth import (
+    ChangePasswordRequest,
     InviteUserRequest,
     LoginRequest,
     RefreshRequest,
     RegisterRequest,
     TokenResponse,
+    UpdateProfileRequest,
     UserResponse,
 )
 
@@ -148,3 +150,45 @@ async def list_users(
         )
         for u in result.scalars().all()
     ]
+
+
+@router.put("/me", response_model=UserResponse)
+async def update_profile(
+    data: UpdateProfileRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if data.full_name is not None:
+        current_user.full_name = data.full_name
+    if data.email is not None and data.email != current_user.email:
+        existing = await db.execute(
+            select(User).where(User.email == data.email)
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Email deja utilise")
+        current_user.email = data.email
+
+    return UserResponse(
+        id=str(current_user.id),
+        email=current_user.email,
+        full_name=current_user.full_name,
+        role=current_user.role,
+        tenant_id=str(current_user.tenant_id),
+    )
+
+
+@router.post("/change-password")
+async def change_password(
+    data: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+):
+    if not verify_password(data.current_password, current_user.password_hash):
+        raise HTTPException(
+            status_code=400, detail="Mot de passe actuel incorrect"
+        )
+    if len(data.new_password) < 8:
+        raise HTTPException(
+            status_code=400, detail="Le nouveau mot de passe doit faire au moins 8 caracteres"
+        )
+    current_user.password_hash = hash_password(data.new_password)
+    return {"status": "ok"}

@@ -30,6 +30,16 @@ class InviteUserRequest(BaseModel):
     role: str = "recruiter"
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class UpdateProfileRequest(BaseModel):
+    full_name: str | None = None
+    email: EmailStr | None = None
+
+
 class UserResponse(BaseModel):
     id: str
     email: str
