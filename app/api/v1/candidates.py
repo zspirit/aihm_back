@@ -1,10 +1,14 @@
 import asyncio
+import csv
+import io
 import json
 import secrets
 from uuid import UUID
 
+from typing import List
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -157,6 +161,106 @@ async def create_candidate(
         cv_parsed_data=candidate.cv_parsed_data,
         pipeline_status=candidate.pipeline_status,
         created_at=candidate.created_at,
+    )
+
+
+@router.post(
+    "/positions/{position_id}/candidates/batch",
+    status_code=status.HTTP_201_CREATED,
+)
+async def batch_create_candidates(
+    position_id: UUID,
+    cvs: List[UploadFile] = File(...),
+    current_user: User = Depends(require_role("admin", "recruiter")),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Position).where(
+            Position.id == position_id, Position.tenant_id == current_user.tenant_id
+        )
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Poste introuvable")
+
+    created = []
+    for cv_file in cvs:
+        filename = cv_file.filename or "candidat"
+        name = filename.rsplit(".", 1)[0].replace("_", " ").replace("-", " ").strip()
+        if not name:
+            name = "Candidat"
+
+        cv_path = await upload_file(
+            cv_file, settings.S3_BUCKET_CVS, f"{current_user.tenant_id}/{position_id}"
+        )
+
+        candidate = Candidate(
+            tenant_id=current_user.tenant_id,
+            position_id=position_id,
+            name=name,
+            cv_file_path=cv_path,
+        )
+        db.add(candidate)
+        await db.flush()
+
+        for consent_type in ["data_processing", "call_recording"]:
+            consent = Consent(
+                candidate_id=candidate.id,
+                token=secrets.token_urlsafe(32),
+                type=consent_type,
+            )
+            db.add(consent)
+
+        from app.workers.cv_processing import process_cv
+
+        process_cv.delay(str(candidate.id))
+
+        created.append({
+            "id": str(candidate.id),
+            "name": candidate.name,
+            "cv_file_path": candidate.cv_file_path,
+        })
+
+    return {"created": len(created), "candidates": created}
+
+
+@router.get("/positions/{position_id}/candidates/export")
+async def export_candidates_csv(
+    position_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Position).where(Position.id == position_id, Position.tenant_id == tenant_id)
+    )
+    position = result.scalar_one_or_none()
+    if not position:
+        raise HTTPException(status_code=404, detail="Poste introuvable")
+
+    cand_result = await db.execute(
+        select(Candidate)
+        .where(Candidate.position_id == position_id, Candidate.tenant_id == tenant_id)
+        .order_by(Candidate.cv_score.desc().nulls_last())
+    )
+    candidates = cand_result.scalars().all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Nom", "Email", "Telephone", "Score CV", "Statut", "Date creation"])
+    for c in candidates:
+        writer.writerow([
+            c.name,
+            c.email or "",
+            c.phone or "",
+            round(c.cv_score, 1) if c.cv_score is not None else "",
+            c.pipeline_status,
+            c.created_at.strftime("%Y-%m-%d %H:%M") if c.created_at else "",
+        ])
+
+    csv_content = output.getvalue()
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="candidats_{position_id}.csv"'},
     )
 
 
