@@ -49,9 +49,7 @@ async def twilio_voice_handler(
 
     if interview_id:
         async with async_session() as db:
-            result = await db.execute(
-                select(Interview).where(Interview.id == UUID(interview_id))
-            )
+            result = await db.execute(select(Interview).where(Interview.id == UUID(interview_id)))
             interview = result.scalar_one_or_none()
             if interview and interview.questions_asked:
                 questions = interview.questions_asked
@@ -77,19 +75,23 @@ async def twilio_voice_handler(
     for i, q in enumerate(questions):
         question_text = q.get("text", q) if isinstance(q, dict) else str(q)
         pause_duration = q.get("expected_duration_seconds", 45) if isinstance(q, dict) else 45
-        twiml_parts.extend([
-            f'  <Say language="fr-FR" voice="Polly.Lea">',
-            f"    Question {i + 1}. {question_text}",
-            "  </Say>",
-            f'  <Pause length="{pause_duration}"/>',
-        ])
+        twiml_parts.extend(
+            [
+                '  <Say language="fr-FR" voice="Polly.Lea">',
+                f"    Question {i + 1}. {question_text}",
+                "  </Say>",
+                f'  <Pause length="{pause_duration}"/>',
+            ]
+        )
 
-    twiml_parts.extend([
-        '  <Say language="fr-FR" voice="Polly.Lea">',
-        "    Merci beaucoup pour vos reponses. L'entretien est maintenant termine.",
-        "    Vous recevrez un retour prochainement. Bonne journee.",
-        "  </Say>",
-        "</Response>",
-    ])
+    twiml_parts.extend(
+        [
+            '  <Say language="fr-FR" voice="Polly.Lea">',
+            "    Merci beaucoup pour vos reponses. L'entretien est maintenant termine.",
+            "    Vous recevrez un retour prochainement. Bonne journee.",
+            "  </Say>",
+            "</Response>",
+        ]
+    )
 
     return Response(content="\n".join(twiml_parts), media_type="application/xml")

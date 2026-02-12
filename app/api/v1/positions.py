@@ -5,7 +5,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_user, get_tenant_id, require_role
+from app.core.dependencies import get_tenant_id, require_role
 from app.models.candidate import Candidate
 from app.models.position import Position
 from app.models.user import User
@@ -53,9 +53,7 @@ async def list_positions(
 
     responses = []
     for pos in positions:
-        count_result = await db.execute(
-            select(func.count()).where(Candidate.position_id == pos.id)
-        )
+        count_result = await db.execute(select(func.count()).where(Candidate.position_id == pos.id))
         count = count_result.scalar()
         resp = PositionResponse(
             id=str(pos.id),
@@ -155,7 +153,10 @@ async def update_position(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(Position).where(Position.id == position_id, Position.tenant_id == current_user.tenant_id)
+        select(Position).where(
+            Position.id == position_id,
+            Position.tenant_id == current_user.tenant_id,
+        )
     )
     position = result.scalar_one_or_none()
     if not position:
@@ -193,7 +194,10 @@ async def delete_position(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(Position).where(Position.id == position_id, Position.tenant_id == current_user.tenant_id)
+        select(Position).where(
+            Position.id == position_id,
+            Position.tenant_id == current_user.tenant_id,
+        )
     )
     position = result.scalar_one_or_none()
     if not position:

@@ -1,4 +1,3 @@
-from functools import wraps
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
@@ -33,7 +32,10 @@ async def get_current_user(
     result = await db.execute(select(User).where(User.id == UUID(user_id)))
     user = result.scalar_one_or_none()
     if user is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Utilisateur introuvable")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Utilisateur introuvable",
+        )
 
     return user
 
@@ -47,7 +49,9 @@ def require_role(*allowed_roles: str):
         if current_user.role not in allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Role '{current_user.role}' non autorise. Roles requis: {', '.join(allowed_roles)}",
+                detail=f"Role '{current_user.role}' non autorise. "
+                f"Roles requis: {', '.join(allowed_roles)}",
             )
         return current_user
+
     return dependency

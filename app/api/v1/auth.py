@@ -104,7 +104,10 @@ async def invite_user(
     db: AsyncSession = Depends(get_db),
 ):
     if data.role not in VALID_ROLES:
-        raise HTTPException(status_code=400, detail=f"Role invalide. Roles possibles: {', '.join(VALID_ROLES)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Role invalide. Roles possibles: {', '.join(VALID_ROLES)}",
+        )
 
     existing = await db.execute(select(User).where(User.email == data.email))
     if existing.scalar_one_or_none():
@@ -134,9 +137,7 @@ async def list_users(
     current_user: User = Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(User).where(User.tenant_id == current_user.tenant_id)
-    )
+    result = await db.execute(select(User).where(User.tenant_id == current_user.tenant_id))
     return [
         UserResponse(
             id=str(u.id),

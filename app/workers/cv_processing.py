@@ -1,4 +1,5 @@
 import json
+
 import structlog
 from celery import shared_task
 
@@ -23,9 +24,10 @@ def process_cv(self, candidate_id: str):
 
     session = get_sync_session()
     try:
+        from uuid import UUID
+
         from app.models.candidate import Candidate
         from app.models.position import Position
-        from uuid import UUID
 
         candidate = session.get(Candidate, UUID(candidate_id))
         if not candidate or not candidate.cv_file_path:
@@ -52,8 +54,8 @@ def process_cv(self, candidate_id: str):
         )
 
         # Trigger question generation + consent email
-        from app.workers.question_generation import generate_questions
         from app.workers.notifications import send_consent_email
+        from app.workers.question_generation import generate_questions
 
         generate_questions.delay(candidate_id)
         send_consent_email.delay(candidate_id)

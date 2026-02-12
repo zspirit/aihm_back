@@ -92,6 +92,7 @@ async def health():
     # PostgreSQL
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session
 
         async with async_session() as session:

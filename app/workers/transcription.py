@@ -1,4 +1,5 @@
 import json
+
 import structlog
 from celery import shared_task
 
@@ -101,19 +102,19 @@ def transcribe_with_whisper(audio_data: bytes) -> dict:
         all_segments = []
         full_text_parts = []
         for segment in segments:
-            all_segments.append({
-                "start": segment.start,
-                "end": segment.end,
-                "text": segment.text,
-                "avg_logprob": segment.avg_logprob,
-            })
+            all_segments.append(
+                {
+                    "start": segment.start,
+                    "end": segment.end,
+                    "text": segment.text,
+                    "avg_logprob": segment.avg_logprob,
+                }
+            )
             full_text_parts.append(segment.text)
 
         os.unlink(temp_path)
 
-        avg_confidence = (
-            sum(s["avg_logprob"] for s in all_segments) / max(len(all_segments), 1)
-        )
+        avg_confidence = sum(s["avg_logprob"] for s in all_segments) / max(len(all_segments), 1)
 
         logger.info(
             "whisper_transcription_complete",
@@ -143,6 +144,7 @@ def segment_transcription(full_text: str, questions: list[dict]) -> dict:
         return {"full": full_text}
 
     from anthropic import Anthropic
+
     from app.core.config import get_settings
 
     settings = get_settings()

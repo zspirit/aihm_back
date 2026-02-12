@@ -49,6 +49,12 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
 
+[tool.ruff.lint.per-file-ignores]
+"app/api/v1/webhooks.py" = ["N803", "E501"]
+"app/main.py" = ["E402"]
+"app/workers/*" = ["E501"]
+"tests/*" = ["E402"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

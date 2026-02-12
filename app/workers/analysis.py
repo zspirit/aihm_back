@@ -1,4 +1,5 @@
 import json
+
 import structlog
 from celery import shared_task
 
@@ -15,12 +16,13 @@ def analyze_interview(self, interview_id: str):
     try:
         from uuid import UUID
 
+        from sqlalchemy import select
+
         from app.models.analysis import Analysis
         from app.models.candidate import Candidate
         from app.models.interview import Interview
         from app.models.position import Position
         from app.models.transcription import Transcription
-        from sqlalchemy import select
 
         interview = session.get(Interview, UUID(interview_id))
         if not interview:
@@ -69,6 +71,7 @@ def analyze_interview(self, interview_id: str):
 
 def run_analysis(transcription, position, candidate) -> dict:
     from anthropic import Anthropic
+
     from app.core.config import get_settings
 
     settings = get_settings()

@@ -1,4 +1,5 @@
 import json
+
 import structlog
 from celery import shared_task
 
@@ -63,6 +64,7 @@ def generate_report(self, interview_id: str):
 
 def build_report(candidate, position, interview, analysis, transcription) -> dict:
     from anthropic import Anthropic
+
     from app.core.config import get_settings
 
     settings = get_settings()
@@ -77,8 +79,6 @@ def build_report(candidate, position, interview, analysis, transcription) -> dic
             "experience_examples": analysis.experience_examples,
             "communication_indicators": analysis.communication_indicators,
         }
-
-    trans_text = transcription.full_text if transcription else ""
 
     response = client.messages.create(
         model=settings.ANTHROPIC_MODEL,

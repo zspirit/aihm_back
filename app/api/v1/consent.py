@@ -27,17 +27,13 @@ async def get_consent_page(token: str, db: AsyncSession = Depends(get_db)):
     )
     candidate = candidate_result.scalar_one_or_none()
 
-    position_result = await db.execute(
-        select(Position).where(Position.id == candidate.position_id)
-    )
+    position_result = await db.execute(select(Position).where(Position.id == candidate.position_id))
     position = position_result.scalar_one_or_none()
 
     tenant_result = await db.execute(select(Tenant).where(Tenant.id == candidate.tenant_id))
     tenant = tenant_result.scalar_one_or_none()
 
-    all_consents = await db.execute(
-        select(Consent).where(Consent.candidate_id == candidate.id)
-    )
+    all_consents = await db.execute(select(Consent).where(Consent.candidate_id == candidate.id))
     consent_types = [c.type for c in all_consents.scalars().all()]
 
     return ConsentPageResponse(

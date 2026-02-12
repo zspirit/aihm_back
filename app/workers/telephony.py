@@ -1,4 +1,3 @@
-import json
 from datetime import datetime, timezone
 
 import structlog
@@ -89,9 +88,7 @@ def handle_call_status(call_sid: str, call_status: str, duration: int):
         from app.models.candidate import Candidate
         from app.models.interview import Interview
 
-        result = session.execute(
-            select(Interview).where(Interview.call_provider_id == call_sid)
-        )
+        result = session.execute(select(Interview).where(Interview.call_provider_id == call_sid))
         interview = result.scalar_one_or_none()
         if not interview:
             logger.warning("call_status_no_interview", call_sid=call_sid)
@@ -131,9 +128,7 @@ def handle_recording_ready(call_sid: str, recording_url: str, recording_sid: str
 
         from app.models.interview import Interview
 
-        result = session.execute(
-            select(Interview).where(Interview.call_provider_id == call_sid)
-        )
+        result = session.execute(select(Interview).where(Interview.call_provider_id == call_sid))
         interview = result.scalar_one_or_none()
         if not interview:
             return

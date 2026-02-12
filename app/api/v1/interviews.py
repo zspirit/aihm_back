@@ -61,9 +61,7 @@ async def schedule_interview(
             status_code=400, detail="Le candidat n'a pas donne son consentement pour l'appel"
         )
 
-    attempts = await db.execute(
-        select(Interview).where(Interview.candidate_id == candidate_id)
-    )
+    attempts = await db.execute(select(Interview).where(Interview.candidate_id == candidate_id))
     attempt_count = len(attempts.scalars().all())
     if attempt_count >= 3:
         raise HTTPException(status_code=400, detail="Nombre maximum de tentatives atteint (3)")
@@ -198,9 +196,7 @@ async def get_report(
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Interview introuvable")
 
-    report_result = await db.execute(
-        select(Report).where(Report.interview_id == interview_id)
-    )
+    report_result = await db.execute(select(Report).where(Report.interview_id == interview_id))
     report = report_result.scalar_one_or_none()
     if not report:
         raise HTTPException(status_code=404, detail="Rapport non disponible")
@@ -240,9 +236,11 @@ async def get_audio(
     except Exception:
         raise HTTPException(status_code=404, detail="Fichier audio introuvable")
 
-    return Response(content=data, media_type="audio/mpeg", headers={
-        "Content-Disposition": f'inline; filename="interview_{interview_id}.mp3"'
-    })
+    return Response(
+        content=data,
+        media_type="audio/mpeg",
+        headers={"Content-Disposition": f'inline; filename="interview_{interview_id}.mp3"'},
+    )
 
 
 @router.get("/interviews/{interview_id}/report/download")
@@ -257,9 +255,7 @@ async def download_report_pdf(
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Interview introuvable")
 
-    report_result = await db.execute(
-        select(Report).where(Report.interview_id == interview_id)
-    )
+    report_result = await db.execute(select(Report).where(Report.interview_id == interview_id))
     report = report_result.scalar_one_or_none()
     if not report or not report.pdf_file_path:
         raise HTTPException(status_code=404, detail="Rapport PDF non disponible")
@@ -273,6 +269,8 @@ async def download_report_pdf(
     except Exception:
         raise HTTPException(status_code=404, detail="Fichier PDF introuvable")
 
-    return Response(content=data, media_type="application/pdf", headers={
-        "Content-Disposition": f'attachment; filename="rapport_{interview_id}.pdf"'
-    })
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="rapport_{interview_id}.pdf"'},
+    )

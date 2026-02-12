@@ -21,12 +21,14 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
 )
 
-celery_app.autodiscover_tasks([
-    "app.workers.cv_processing",
-    "app.workers.question_generation",
-    "app.workers.telephony",
-    "app.workers.transcription",
-    "app.workers.analysis",
-    "app.workers.report_generation",
-    "app.workers.notifications",
-])
+celery_app.autodiscover_tasks(
+    [
+        "app.workers.cv_processing",
+        "app.workers.question_generation",
+        "app.workers.telephony",
+        "app.workers.transcription",
+        "app.workers.analysis",
+        "app.workers.report_generation",
+        "app.workers.notifications",
+    ]
+)

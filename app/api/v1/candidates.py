@@ -3,18 +3,27 @@ import csv
 import io
 import json
 import secrets
+from typing import List
 from uuid import UUID
 
-from typing import List
-
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.database import get_db, async_session
-from app.core.dependencies import get_current_user, get_tenant_id, require_role
+from app.core.database import async_session, get_db
+from app.core.dependencies import get_tenant_id, require_role
 from app.models.candidate import Candidate
 from app.models.consent import Consent
 from app.models.position import Position
@@ -49,9 +58,13 @@ async def list_candidates(
         Candidate.position_id == position_id,
         Candidate.tenant_id == tenant_id,
     )
-    count_query = select(func.count()).select_from(Candidate).where(
-        Candidate.position_id == position_id,
-        Candidate.tenant_id == tenant_id,
+    count_query = (
+        select(func.count())
+        .select_from(Candidate)
+        .where(
+            Candidate.position_id == position_id,
+            Candidate.tenant_id == tenant_id,
+        )
     )
 
     if search:
@@ -214,11 +227,13 @@ async def batch_create_candidates(
 
         process_cv.delay(str(candidate.id))
 
-        created.append({
-            "id": str(candidate.id),
-            "name": candidate.name,
-            "cv_file_path": candidate.cv_file_path,
-        })
+        created.append(
+            {
+                "id": str(candidate.id),
+                "name": candidate.name,
+                "cv_file_path": candidate.cv_file_path,
+            }
+        )
 
     return {"created": len(created), "candidates": created}
 
@@ -247,14 +262,16 @@ async def export_candidates_csv(
     writer = csv.writer(output)
     writer.writerow(["Nom", "Email", "Telephone", "Score CV", "Statut", "Date creation"])
     for c in candidates:
-        writer.writerow([
-            c.name,
-            c.email or "",
-            c.phone or "",
-            round(c.cv_score, 1) if c.cv_score is not None else "",
-            c.pipeline_status,
-            c.created_at.strftime("%Y-%m-%d %H:%M") if c.created_at else "",
-        ])
+        writer.writerow(
+            [
+                c.name,
+                c.email or "",
+                c.phone or "",
+                round(c.cv_score, 1) if c.cv_score is not None else "",
+                c.pipeline_status,
+                c.created_at.strftime("%Y-%m-%d %H:%M") if c.created_at else "",
+            ]
+        )
 
     csv_content = output.getvalue()
     return Response(
@@ -310,7 +327,10 @@ async def grant_consent_admin(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(Candidate).where(Candidate.id == candidate_id, Candidate.tenant_id == current_user.tenant_id)
+        select(Candidate).where(
+            Candidate.id == candidate_id,
+            Candidate.tenant_id == current_user.tenant_id,
+        )
     )
     candidate = result.scalar_one_or_none()
     if not candidate:
@@ -318,9 +338,7 @@ async def grant_consent_admin(
 
     from datetime import datetime, timezone
 
-    consents_result = await db.execute(
-        select(Consent).where(Consent.candidate_id == candidate_id)
-    )
+    consents_result = await db.execute(select(Consent).where(Consent.candidate_id == candidate_id))
     consents = consents_result.scalars().all()
     for consent in consents:
         if not consent.granted:
@@ -339,7 +357,10 @@ async def delete_candidate(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(Candidate).where(Candidate.id == candidate_id, Candidate.tenant_id == current_user.tenant_id)
+        select(Candidate).where(
+            Candidate.id == candidate_id,
+            Candidate.tenant_id == current_user.tenant_id,
+        )
     )
     candidate = result.scalar_one_or_none()
     if not candidate:
@@ -390,9 +411,14 @@ async def candidate_events(
                     "cv_parsed_data": candidate.cv_parsed_data,
                     "interview_id": str(latest_iv_id) if latest_iv_id else None,
                 }
-                yield f"event: update\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+                yield (
+                    f"event: update\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+                )
                 if candidate.pipeline_status in TERMINAL_STATUSES:
-                    yield f"event: done\ndata: {json.dumps({'status': candidate.pipeline_status})}\n\n"
+                    yield (
+                        f"event: done\ndata: "
+                        f"{json.dumps({'status': candidate.pipeline_status})}\n\n"
+                    )
                     break
             await asyncio.sleep(3)
 

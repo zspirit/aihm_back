@@ -1,4 +1,5 @@
 import json
+
 import structlog
 from celery import shared_task
 
