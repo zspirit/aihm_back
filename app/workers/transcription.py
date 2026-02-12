@@ -4,6 +4,30 @@ from celery import shared_task
 
 logger = structlog.get_logger()
 
+_whisper_model = None
+
+
+def get_whisper_model():
+    """Load faster-whisper model (cached after first call)."""
+    global _whisper_model
+    if _whisper_model is None:
+        from app.core.config import get_settings
+
+        settings = get_settings()
+        from faster_whisper import WhisperModel
+
+        _whisper_model = WhisperModel(
+            settings.WHISPER_MODEL,
+            device=settings.WHISPER_DEVICE,
+            compute_type=settings.WHISPER_COMPUTE_TYPE,
+        )
+        logger.info(
+            "whisper_model_loaded",
+            model=settings.WHISPER_MODEL,
+            device=settings.WHISPER_DEVICE,
+        )
+    return _whisper_model
+
 
 @shared_task(name="transcription.transcribe", bind=True, max_retries=3)
 def transcribe_audio(self, interview_id: str):
@@ -29,7 +53,7 @@ def transcribe_audio(self, interview_id: str):
         parts = interview.audio_file_path.split("/", 1)
         audio_data = download_file(parts[0], parts[1])
 
-        # Transcribe with Whisper API or local
+        # Transcribe with faster-whisper (fallback to simulated)
         result = transcribe_with_whisper(audio_data)
 
         # Segment by questions
@@ -61,36 +85,53 @@ def transcribe_audio(self, interview_id: str):
 
 
 def transcribe_with_whisper(audio_data: bytes) -> dict:
-    """Transcribe audio using OpenAI Whisper API as fallback.
-    In production, use self-hosted Whisper for cost savings."""
-    import tempfile
+    """Transcribe audio using faster-whisper. Falls back if unavailable."""
     import os
+    import tempfile
 
     try:
-        import whisper
-
-        model = whisper.load_model("small")
+        model = get_whisper_model()
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             f.write(audio_data)
             temp_path = f.name
 
-        result = model.transcribe(temp_path, language="fr")
+        segments, info = model.transcribe(temp_path, beam_size=5, language="fr")
+
+        all_segments = []
+        full_text_parts = []
+        for segment in segments:
+            all_segments.append({
+                "start": segment.start,
+                "end": segment.end,
+                "text": segment.text,
+                "avg_logprob": segment.avg_logprob,
+            })
+            full_text_parts.append(segment.text)
+
         os.unlink(temp_path)
 
+        avg_confidence = (
+            sum(s["avg_logprob"] for s in all_segments) / max(len(all_segments), 1)
+        )
+
+        logger.info(
+            "whisper_transcription_complete",
+            language=info.language,
+            duration=info.duration,
+            num_segments=len(all_segments),
+        )
+
         return {
-            "text": result["text"],
-            "language": result.get("language", "fr"),
-            "segments": result.get("segments", []),
-            "confidence": sum(
-                s.get("avg_logprob", 0) for s in result.get("segments", [])
-            ) / max(len(result.get("segments", [])), 1),
+            "text": " ".join(full_text_parts).strip(),
+            "language": info.language,
+            "segments": all_segments,
+            "confidence": avg_confidence,
         }
-    except ImportError:
-        # Fallback: use Anthropic to simulate (for development/testing)
-        logger.warning("whisper_not_available", fallback="anthropic")
+    except Exception as e:
+        logger.warning("whisper_fallback", error=str(e))
         return {
-            "text": "[Transcription simulee - Whisper non installe]",
+            "text": "[Transcription simulee - faster-whisper non disponible]",
             "language": "fr",
             "confidence": 0.0,
         }
