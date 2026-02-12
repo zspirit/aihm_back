@@ -39,6 +39,8 @@ app = FastAPI(
     description="AI Hiring Manager - API de pre-screening telephonique par IA",
     version="0.1.0",
     lifespan=lifespan,
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None,
 )
 
 app.state.limiter = limiter
@@ -53,8 +55,19 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         if not settings.DEBUG:
-            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=31536000; includeSubDomains"
+            )
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                f"connect-src 'self' {settings.FRONTEND_URL} https://*.sentry.io; "
+                "img-src 'self' data:; "
+                "style-src 'self' 'unsafe-inline'; "
+                "script-src 'self'; "
+                "frame-ancestors 'none'"
+            )
         return response
 
 
