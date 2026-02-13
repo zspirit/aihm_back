@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 
 class RegisterRequest(BaseModel):
@@ -40,11 +40,20 @@ class UpdateProfileRequest(BaseModel):
     email: EmailStr | None = None
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    new_password: str = Field(min_length=8)
+
+
 class UserResponse(BaseModel):
     id: str
     email: str
     full_name: str
     role: str
     tenant_id: str
+    email_verified: bool
 
     model_config = {"from_attributes": True}

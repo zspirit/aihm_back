@@ -26,8 +26,10 @@ from app.core.database import async_session, get_db
 from app.core.dependencies import get_tenant_id, require_role
 from app.models.candidate import Candidate
 from app.models.consent import Consent
+from app.models.interview import Interview
 from app.models.position import Position
 from app.models.user import User
+from app.schemas.bulk_import import BulkActionRequest, BulkActionResponse, BulkActionResult
 from app.schemas.candidate import CandidateListResponse, CandidateResponse, PaginatedCandidates
 from app.services.audit import log_action
 from app.services.storage import upload_file
@@ -438,4 +440,177 @@ async def candidate_events(
         event_stream(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.post("/positions/{position_id}/candidates/bulk-action")
+async def bulk_action(
+    position_id: UUID,
+    body: BulkActionRequest,
+    request: Request,
+    current_user: User = Depends(require_role("admin", "recruiter")),
+    db: AsyncSession = Depends(get_db),
+):
+    if len(body.candidate_ids) > 50:
+        raise HTTPException(status_code=400, detail="Maximum 50 candidats autorises par action")
+
+    if body.action not in ("schedule", "reject", "delete"):
+        raise HTTPException(status_code=400, detail="Action non supportee")
+
+    result = await db.execute(
+        select(Position).where(
+            Position.id == position_id, Position.tenant_id == current_user.tenant_id
+        )
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Poste introuvable")
+
+    results = []
+    success_count = 0
+    failed_count = 0
+
+    for candidate_id_str in body.candidate_ids:
+        try:
+            candidate_id = UUID(candidate_id_str)
+            cand_result = await db.execute(
+                select(Candidate).where(
+                    Candidate.id == candidate_id,
+                    Candidate.tenant_id == current_user.tenant_id,
+                    Candidate.position_id == position_id,
+                )
+            )
+            candidate = cand_result.scalar_one_or_none()
+            if not candidate:
+                results.append(
+                    BulkActionResult(
+                        candidate_id=candidate_id_str,
+                        status="error",
+                        reason="Candidat introuvable",
+                    )
+                )
+                failed_count += 1
+                continue
+
+            if body.action == "schedule":
+                # Check consent granted
+                consent_result = await db.execute(
+                    select(Consent).where(
+                        Consent.candidate_id == candidate_id,
+                        Consent.type == "call_recording",
+                        Consent.granted.is_(True),
+                    )
+                )
+                if not consent_result.scalar_one_or_none():
+                    results.append(
+                        BulkActionResult(
+                            candidate_id=candidate_id_str,
+                            status="error",
+                            reason="Consentement non donne",
+                        )
+                    )
+                    failed_count += 1
+                    continue
+
+                # Check phone exists
+                if not candidate.phone:
+                    results.append(
+                        BulkActionResult(
+                            candidate_id=candidate_id_str,
+                            status="error",
+                            reason="Numero de telephone manquant",
+                        )
+                    )
+                    failed_count += 1
+                    continue
+
+                # Check max attempts
+                attempts = await db.execute(
+                    select(Interview).where(Interview.candidate_id == candidate_id)
+                )
+                attempt_count = len(attempts.scalars().all())
+                if attempt_count >= 3:
+                    results.append(
+                        BulkActionResult(
+                            candidate_id=candidate_id_str,
+                            status="error",
+                            reason="Nombre maximum de tentatives atteint (3)",
+                        )
+                    )
+                    failed_count += 1
+                    continue
+
+                # Create interview
+                interview = Interview(
+                    candidate_id=candidate_id,
+                    position_id=position_id,
+                    tenant_id=current_user.tenant_id,
+                    scheduled_at=None,
+                    attempt_number=attempt_count + 1,
+                )
+                db.add(interview)
+                await db.flush()
+
+                candidate.pipeline_status = "call_scheduled"
+
+                # Trigger call
+                from app.workers.telephony import initiate_call
+
+                initiate_call.delay(str(interview.id))
+
+                results.append(
+                    BulkActionResult(
+                        candidate_id=candidate_id_str,
+                        status="ok",
+                        reason=None,
+                    )
+                )
+                success_count += 1
+
+            elif body.action == "reject":
+                candidate.pipeline_status = "rejected"
+                results.append(
+                    BulkActionResult(
+                        candidate_id=candidate_id_str,
+                        status="ok",
+                        reason=None,
+                    )
+                )
+                success_count += 1
+
+            elif body.action == "delete":
+                await log_action(
+                    db,
+                    tenant_id=current_user.tenant_id,
+                    user_id=current_user.id,
+                    action="bulk_delete_candidate",
+                    entity_type="candidate",
+                    entity_id=str(candidate_id),
+                    details={"name": candidate.name, "email": candidate.email},
+                )
+                await db.delete(candidate)
+                results.append(
+                    BulkActionResult(
+                        candidate_id=candidate_id_str,
+                        status="ok",
+                        reason=None,
+                    )
+                )
+                success_count += 1
+
+        except Exception as e:
+            results.append(
+                BulkActionResult(
+                    candidate_id=candidate_id_str,
+                    status="error",
+                    reason=str(e),
+                )
+            )
+            failed_count += 1
+
+    return BulkActionResponse(
+        action=body.action,
+        total=len(body.candidate_ids),
+        success=success_count,
+        failed=failed_count,
+        details=results,
     )

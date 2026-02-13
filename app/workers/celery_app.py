@@ -30,5 +30,7 @@ celery_app.autodiscover_tasks(
         "app.workers.analysis",
         "app.workers.report_generation",
         "app.workers.notifications",
+        "app.workers.bulk_import",
+        "app.workers.matching",
     ]
 )

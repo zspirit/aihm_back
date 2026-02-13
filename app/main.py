@@ -86,10 +86,14 @@ from app.api.v1.analytics import router as analytics_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.candidates import router as candidates_router
 from app.api.v1.consent import router as consent_router
+from app.api.v1.copilot import router as copilot_router
 from app.api.v1.interviews import router as interviews_router
 from app.api.v1.positions import router as positions_router
 from app.api.v1.webhooks import router as webhooks_router
 from app.api.v1.webhooks_config import router as webhooks_config_router
+from app.api.v1.notifications import router as notifications_router
+from app.api.v1.bulk_import import router as bulk_import_router
+from app.api.v1.matching import router as matching_router
 
 app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
 app.include_router(positions_router, prefix=settings.API_V1_PREFIX)
@@ -99,6 +103,10 @@ app.include_router(consent_router, prefix=settings.API_V1_PREFIX)
 app.include_router(webhooks_router, prefix=settings.API_V1_PREFIX)
 app.include_router(webhooks_config_router, prefix=settings.API_V1_PREFIX)
 app.include_router(analytics_router, prefix=settings.API_V1_PREFIX)
+app.include_router(copilot_router, prefix=settings.API_V1_PREFIX)
+app.include_router(notifications_router, prefix=settings.API_V1_PREFIX)
+app.include_router(bulk_import_router, prefix=settings.API_V1_PREFIX)
+app.include_router(matching_router, prefix=settings.API_V1_PREFIX)
 
 
 # --- Health Check enrichi ---

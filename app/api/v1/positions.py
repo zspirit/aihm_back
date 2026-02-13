@@ -1,22 +1,29 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_tenant_id, require_role
+from app.core.dependencies import get_current_user, get_tenant_id, require_role
 from app.models.candidate import Candidate
 from app.models.position import Position
 from app.models.user import User
 from app.schemas.position import (
     PaginatedPositions,
     PositionCreate,
+    PositionDuplicateRequest,
+    PositionImportTextRequest,
     PositionResponse,
     PositionUpdate,
 )
+from app.services.position_import import extract_position_from_text
+from app.services.position_templates import POSITION_TEMPLATES
 
 router = APIRouter(prefix="/positions", tags=["positions"])
+limiter = Limiter(key_func=get_remote_address)
 
 
 @router.get("", response_model=PaginatedPositions)
@@ -108,6 +115,82 @@ async def create_position(
         deadline=position.deadline,
         created_by=str(position.created_by),
         created_at=position.created_at,
+        candidate_count=0,
+    )
+
+
+@router.get("/templates")
+async def list_templates(current_user: User = Depends(get_current_user)):
+    """
+    List available position templates.
+    """
+    return POSITION_TEMPLATES
+
+
+@router.post("/import-text")
+@limiter.limit("5/minute")
+async def import_text(
+    request: Request,
+    body: PositionImportTextRequest,
+    current_user: User = Depends(require_role("admin", "recruiter")),
+):
+    """
+    Import position from raw text using AI extraction.
+    Rate limited to 5 requests per minute.
+    """
+    result = extract_position_from_text(body.text)
+    return result
+
+
+@router.post("/{position_id}/duplicate", status_code=status.HTTP_201_CREATED, response_model=PositionResponse)
+async def duplicate_position(
+    position_id: UUID,
+    body: PositionDuplicateRequest | None = None,
+    current_user: User = Depends(require_role("admin", "recruiter")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Duplicate an existing position.
+    """
+    # Load source position
+    result = await db.execute(
+        select(Position).where(
+            Position.id == position_id,
+            Position.tenant_id == current_user.tenant_id,
+        )
+    )
+    source_position = result.scalar_one_or_none()
+    if not source_position:
+        raise HTTPException(status_code=404, detail="Poste introuvable")
+
+    # Create duplicate
+    new_title = body.title if body and body.title else f"Copie de - {source_position.title}"
+
+    new_position = Position(
+        tenant_id=current_user.tenant_id,
+        title=new_title,
+        description=source_position.description,
+        required_skills=source_position.required_skills,
+        seniority_level=source_position.seniority_level,
+        custom_questions=source_position.custom_questions,
+        status="draft",
+        deadline=source_position.deadline,
+        created_by=current_user.id,
+    )
+    db.add(new_position)
+    await db.flush()
+
+    return PositionResponse(
+        id=str(new_position.id),
+        title=new_position.title,
+        description=new_position.description,
+        required_skills=new_position.required_skills,
+        seniority_level=new_position.seniority_level,
+        custom_questions=new_position.custom_questions,
+        status=new_position.status,
+        deadline=new_position.deadline,
+        created_by=str(new_position.created_by),
+        created_at=new_position.created_at,
         candidate_count=0,
     )
 

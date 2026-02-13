@@ -43,3 +43,11 @@ class PaginatedPositions(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class PositionImportTextRequest(BaseModel):
+    text: str
+
+
+class PositionDuplicateRequest(BaseModel):
+    title: str | None = None
