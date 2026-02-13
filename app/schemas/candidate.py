@@ -43,3 +43,17 @@ class PaginatedCandidates(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class CandidateComparisonItem(BaseModel):
+    id: str
+    name: str
+    email: str | None
+    phone: str | None
+    cv_score: float | None
+    cv_score_explanation: dict | None
+    pipeline_status: str
+    interview: dict | None  # {duration_seconds, ended_at, attempt_number}
+    scores: dict | None  # {global, technical, experience, communication}
+    skill_scores: list | None  # [{skill, demonstrated, motivation, ...}]
+    report_summary: str | None

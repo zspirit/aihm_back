@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -20,6 +20,8 @@ class Position(Base):
     custom_questions: Mapped[dict] = mapped_column(JSONB, default=list)
     status: Mapped[str] = mapped_column(String(50), default="draft")
     deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    auto_advance_threshold: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    auto_reject_threshold: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)

@@ -36,6 +36,8 @@ class PositionCreate(BaseModel):
     seniority_level: str = "mid"
     custom_questions: list[str] = []
     deadline: datetime | None = None
+    auto_advance_threshold: int | None = Field(None, ge=0, le=100)
+    auto_reject_threshold: int | None = Field(None, ge=0, le=100)
 
     @field_validator("required_skills", mode="before")
     @classmethod
@@ -51,6 +53,8 @@ class PositionUpdate(BaseModel):
     custom_questions: list[str] | None = None
     status: str | None = None
     deadline: datetime | None = None
+    auto_advance_threshold: int | None = Field(None, ge=0, le=100)
+    auto_reject_threshold: int | None = Field(None, ge=0, le=100)
 
     @field_validator("required_skills", mode="before")
     @classmethod
@@ -69,6 +73,8 @@ class PositionResponse(BaseModel):
     custom_questions: list
     status: str
     deadline: datetime | None
+    auto_advance_threshold: int | None
+    auto_reject_threshold: int | None
     created_by: str
     created_at: datetime
     candidate_count: int = 0
@@ -89,3 +95,15 @@ class PositionImportTextRequest(BaseModel):
 
 class PositionDuplicateRequest(BaseModel):
     title: str | None = None
+
+
+class PositionOptimization(BaseModel):
+    clarity_score: int  # 1-10
+    clarity_suggestions: list[str]
+    missing_skills: list[dict]  # [{name, category, level_required, reason}]
+    inclusivity_score: int  # 1-10
+    inclusivity_flags: list[str]
+    competitiveness_score: int  # 1-10
+    competitiveness_suggestions: list[str]
+    suggested_questions: list[str]
+    improved_description: str  # rewritten description

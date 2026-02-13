@@ -46,6 +46,18 @@ def process_cv(self, candidate_id: str):
         candidate.cv_score_explanation = score_result["explanation"]
         candidate.pipeline_status = "cv_analyzed"
 
+        cv_score = score_result["score"]
+
+        # Workflow automation
+        auto_advanced = False
+        if position.auto_reject_threshold is not None and cv_score < position.auto_reject_threshold:
+            candidate.pipeline_status = "rejected"
+            logger.info("auto_rejected", candidate_id=candidate_id, score=cv_score, threshold=position.auto_reject_threshold)
+        elif position.auto_advance_threshold is not None and cv_score >= position.auto_advance_threshold:
+            candidate.pipeline_status = "invited"
+            auto_advanced = True
+            logger.info("auto_advanced", candidate_id=candidate_id, score=cv_score, threshold=position.auto_advance_threshold)
+
         session.commit()
         logger.info(
             "cv_processing_done",
@@ -58,7 +70,13 @@ def process_cv(self, candidate_id: str):
         from app.workers.question_generation import generate_questions
 
         generate_questions.delay(candidate_id)
-        send_consent_email.delay(candidate_id)
+
+        if auto_advanced:
+            # Workflow automation triggered consent email
+            send_consent_email.delay(candidate_id)
+        elif position.auto_reject_threshold is None and position.auto_advance_threshold is None:
+            # No automation configured — send consent email as before
+            send_consent_email.delay(candidate_id)
 
     except Exception as e:
         session.rollback()

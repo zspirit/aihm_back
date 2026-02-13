@@ -20,6 +20,7 @@ from app.schemas.position import (
     PositionUpdate,
     normalize_skills,
 )
+from app.services.audit import log_action
 from app.services.position_import import extract_position_from_text
 from app.services.position_templates import POSITION_TEMPLATES
 
@@ -38,6 +39,8 @@ def _build_position_response(position, candidate_count: int = 0) -> PositionResp
         custom_questions=position.custom_questions,
         status=position.status,
         deadline=position.deadline,
+        auto_advance_threshold=position.auto_advance_threshold,
+        auto_reject_threshold=position.auto_reject_threshold,
         created_by=str(position.created_by),
         created_at=position.created_at,
         candidate_count=candidate_count,
@@ -104,10 +107,25 @@ async def create_position(
         seniority_level=data.seniority_level,
         custom_questions=data.custom_questions,
         deadline=data.deadline,
+        auto_advance_threshold=data.auto_advance_threshold,
+        auto_reject_threshold=data.auto_reject_threshold,
         created_by=current_user.id,
     )
     db.add(position)
     await db.flush()
+
+    try:
+        await log_action(
+            db,
+            tenant_id=current_user.tenant_id,
+            user_id=current_user.id,
+            action="create_position",
+            entity_type="position",
+            entity_id=str(position.id),
+            details={"title": data.title},
+        )
+    except Exception:
+        pass
 
     return _build_position_response(position, candidate_count=0)
 
@@ -219,6 +237,19 @@ async def update_position(
         setattr(position, field, value)
     await db.flush()
 
+    try:
+        await log_action(
+            db,
+            tenant_id=current_user.tenant_id,
+            user_id=current_user.id,
+            action="update_position",
+            entity_type="position",
+            entity_id=str(position.id),
+            details={"updated_fields": list(update_data.keys())},
+        )
+    except Exception:
+        pass
+
     count_result = await db.execute(
         select(func.count()).where(Candidate.position_id == position.id)
     )
@@ -242,4 +273,138 @@ async def delete_position(
     position = result.scalar_one_or_none()
     if not position:
         raise HTTPException(status_code=404, detail="Poste introuvable")
+
+    try:
+        await log_action(
+            db,
+            tenant_id=current_user.tenant_id,
+            user_id=current_user.id,
+            action="delete_position",
+            entity_type="position",
+            entity_id=str(position.id),
+            details={"title": position.title},
+        )
+    except Exception:
+        pass
+
     await db.delete(position)
+
+
+@router.post("/{position_id}/optimize")
+@limiter.limit("3/minute")
+async def optimize_position(
+    position_id: UUID,
+    request: Request,
+    current_user: User = Depends(require_role("admin", "recruiter")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Analyze a job description with AI and suggest improvements."""
+    import json
+
+    from anthropic import Anthropic
+
+    from app.core.config import get_settings
+    from app.schemas.position import PositionOptimization
+
+    settings = get_settings()
+
+    result = await db.execute(
+        select(Position).where(
+            Position.id == position_id,
+            Position.tenant_id == current_user.tenant_id,
+        )
+    )
+    position = result.scalar_one_or_none()
+    if not position:
+        raise HTTPException(status_code=404, detail="Poste introuvable")
+
+    skills_text = ""
+    if position.required_skills:
+        skill_names = []
+        for s in position.required_skills:
+            if isinstance(s, dict):
+                skill_names.append(s.get("name", str(s)))
+            else:
+                skill_names.append(str(s))
+        skills_text = ", ".join(skill_names)
+
+    questions_text = ""
+    if position.custom_questions:
+        questions_text = "\n".join(f"- {q}" for q in position.custom_questions)
+
+    prompt = f"""Analyse cette offre d'emploi et suggere des ameliorations. Reponds UNIQUEMENT en JSON valide.
+
+POSTE:
+- Titre: {position.title}
+- Niveau: {position.seniority_level or "non specifie"}
+- Description: {position.description or "Aucune description"}
+- Competences requises: {skills_text or "Aucune competence listee"}
+- Questions d'entretien existantes:
+{questions_text or "Aucune question definie"}
+
+Analyse selon ces 5 axes:
+
+1. CLARTE: La description est-elle claire et specifique ? Suggere des reformulations pour les parties vagues.
+2. COMPETENCES MANQUANTES: En fonction du titre et de la description, y a-t-il des competences qui devraient etre listees ?
+3. INCLUSIVITE: Signale tout langage potentiellement discriminatoire ou genre. Suggere des alternatives neutres.
+4. COMPETITIVITE: Note l'attractivite de l'offre (1-10) et suggere des ameliorations pour attirer plus de candidats.
+5. QUESTIONS: Suggere 2-3 questions d'entretien personnalisees si peu ou pas de questions existent.
+
+Format JSON attendu:
+{{
+    "clarity_score": 7,
+    "clarity_suggestions": ["suggestion 1", "suggestion 2"],
+    "missing_skills": [
+        {{"name": "competence", "category": "technique", "level_required": 3, "reason": "raison"}}
+    ],
+    "inclusivity_score": 8,
+    "inclusivity_flags": ["probleme detecte 1"],
+    "competitiveness_score": 6,
+    "competitiveness_suggestions": ["suggestion 1"],
+    "suggested_questions": ["question 1", "question 2"],
+    "improved_description": "description reecrite et amelioree du poste"
+}}
+
+REGLES:
+- Tous les scores sont entre 1 et 10
+- Les suggestions doivent etre concretes et actionnables
+- La description amelioree doit etre professionnelle et inclusive
+- Les competences manquantes doivent avoir category parmi: technique, experience, soft_skills, langue
+- level_required entre 1 et 5
+- Reponds en francais"""
+
+    client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+
+    response = client.messages.create(
+        model=settings.ANTHROPIC_MODEL,
+        max_tokens=2000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    try:
+        text_content = response.content[0].text
+        if "```json" in text_content:
+            text_content = text_content.split("```json")[1].split("```")[0]
+        elif "```" in text_content:
+            text_content = text_content.split("```")[1].split("```")[0]
+
+        data = json.loads(text_content.strip())
+
+        optimization = PositionOptimization(
+            clarity_score=max(1, min(10, data.get("clarity_score", 5))),
+            clarity_suggestions=data.get("clarity_suggestions", []),
+            missing_skills=data.get("missing_skills", []),
+            inclusivity_score=max(1, min(10, data.get("inclusivity_score", 5))),
+            inclusivity_flags=data.get("inclusivity_flags", []),
+            competitiveness_score=max(1, min(10, data.get("competitiveness_score", 5))),
+            competitiveness_suggestions=data.get("competitiveness_suggestions", []),
+            suggested_questions=data.get("suggested_questions", []),
+            improved_description=data.get("improved_description", position.description or ""),
+        )
+
+        return optimization
+    except (json.JSONDecodeError, IndexError, KeyError):
+        raise HTTPException(
+            status_code=502,
+            detail="Erreur lors de l'analyse IA de l'offre d'emploi",
+        )

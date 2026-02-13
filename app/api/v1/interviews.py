@@ -7,9 +7,10 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import check_free_tier_limit, get_tenant_id
+from app.core.dependencies import check_free_tier_limit, get_current_user, get_tenant_id
 from app.models.analysis import Analysis
 from app.models.candidate import Candidate
+from app.models.user import User
 from app.models.consent import Consent
 from app.models.interview import Interview
 from app.models.position import Position
@@ -25,6 +26,7 @@ from app.schemas.interview import (
     ReportResponse,
     TranscriptionResponse,
 )
+from app.services.audit import log_action
 from app.services.storage import download_file
 
 router = APIRouter(tags=["interviews"])
@@ -209,6 +211,7 @@ async def list_interviews(
 async def reschedule_interview(
     interview_id: UUID,
     data: InterviewUpdate,
+    current_user: User = Depends(get_current_user),
     tenant_id: UUID = Depends(get_tenant_id),
     db: AsyncSession = Depends(get_db),
 ):
@@ -226,6 +229,19 @@ async def reschedule_interview(
 
     interview.scheduled_at = data.scheduled_at
     await db.flush()
+
+    try:
+        await log_action(
+            db,
+            tenant_id=current_user.tenant_id,
+            user_id=current_user.id,
+            action="reschedule_interview",
+            entity_type="interview",
+            entity_id=str(interview.id),
+            details={"new_scheduled_at": str(data.scheduled_at)},
+        )
+    except Exception:
+        pass
 
     return InterviewResponse(
         id=str(interview.id),
@@ -245,6 +261,7 @@ async def reschedule_interview(
 @router.delete("/interviews/{interview_id}", status_code=204)
 async def cancel_interview(
     interview_id: UUID,
+    current_user: User = Depends(get_current_user),
     tenant_id: UUID = Depends(get_tenant_id),
     db: AsyncSession = Depends(get_db),
 ):
@@ -259,6 +276,19 @@ async def cancel_interview(
         raise HTTPException(
             status_code=400, detail="Seuls les entretiens planifies peuvent etre annules"
         )
+
+    try:
+        await log_action(
+            db,
+            tenant_id=current_user.tenant_id,
+            user_id=current_user.id,
+            action="cancel_interview",
+            entity_type="interview",
+            entity_id=str(interview.id),
+            details={},
+        )
+    except Exception:
+        pass
 
     interview.status = "cancelled"
     await db.flush()

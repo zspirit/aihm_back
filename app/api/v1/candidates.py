@@ -30,7 +30,14 @@ from app.models.interview import Interview
 from app.models.position import Position
 from app.models.user import User
 from app.schemas.bulk_import import BulkActionRequest, BulkActionResponse, BulkActionResult
-from app.schemas.candidate import CandidateListResponse, CandidateResponse, PaginatedCandidates
+from app.models.analysis import Analysis
+from app.models.report import Report
+from app.schemas.candidate import (
+    CandidateComparisonItem,
+    CandidateListResponse,
+    CandidateResponse,
+    PaginatedCandidates,
+)
 from app.services.audit import log_action
 from app.services.storage import upload_file
 
@@ -618,3 +625,138 @@ async def bulk_action(
         failed=failed_count,
         details=results,
     )
+
+
+@router.get(
+    "/positions/{position_id}/candidates/compare",
+    response_model=list[CandidateComparisonItem],
+)
+async def compare_candidates(
+    position_id: UUID,
+    candidate_ids: str = Query(..., description="Comma-separated candidate IDs (2-6)"),
+    tenant_id: UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Compare multiple candidates side-by-side for the same position."""
+    # Parse and validate candidate IDs
+    raw_ids = [cid.strip() for cid in candidate_ids.split(",") if cid.strip()]
+    if len(raw_ids) < 2 or len(raw_ids) > 6:
+        raise HTTPException(
+            status_code=400,
+            detail="Vous devez fournir entre 2 et 6 identifiants de candidats",
+        )
+
+    try:
+        parsed_ids = [UUID(cid) for cid in raw_ids]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Identifiant de candidat invalide")
+
+    # Verify position exists and belongs to tenant
+    result = await db.execute(
+        select(Position).where(Position.id == position_id, Position.tenant_id == tenant_id)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Poste introuvable")
+
+    # Fetch all candidates in one query
+    result = await db.execute(
+        select(Candidate).where(
+            Candidate.id.in_(parsed_ids),
+            Candidate.tenant_id == tenant_id,
+        )
+    )
+    candidates = {c.id: c for c in result.scalars().all()}
+
+    # Validate all candidates found and belong to same position
+    for cid in parsed_ids:
+        if cid not in candidates:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Candidat {cid} introuvable",
+            )
+        if candidates[cid].position_id != position_id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Le candidat {cid} n'appartient pas a ce poste",
+            )
+
+    # Fetch latest interview for each candidate (subquery for latest per candidate)
+    interview_subq = (
+        select(
+            Interview.id,
+            Interview.candidate_id,
+            Interview.duration_seconds,
+            Interview.ended_at,
+            Interview.attempt_number,
+            func.row_number()
+            .over(partition_by=Interview.candidate_id, order_by=Interview.created_at.desc())
+            .label("rn"),
+        )
+        .where(Interview.candidate_id.in_(parsed_ids))
+        .subquery()
+    )
+
+    latest_interviews_q = select(interview_subq).where(interview_subq.c.rn == 1)
+    iv_result = await db.execute(latest_interviews_q)
+    interviews = {row.candidate_id: row for row in iv_result.all()}
+
+    # Fetch analyses for those interviews
+    interview_ids = [row.id for row in interviews.values()]
+    analyses = {}
+    if interview_ids:
+        analysis_result = await db.execute(
+            select(Analysis).where(Analysis.interview_id.in_(interview_ids))
+        )
+        for a in analysis_result.scalars().all():
+            analyses[a.interview_id] = a
+
+    # Fetch reports for candidates
+    reports = {}
+    if interview_ids:
+        report_result = await db.execute(
+            select(Report).where(Report.interview_id.in_(interview_ids))
+        )
+        for r in report_result.scalars().all():
+            reports[r.interview_id] = r
+
+    # Build response in requested order
+    items = []
+    for cid in parsed_ids:
+        c = candidates[cid]
+        iv = interviews.get(cid)
+        iv_id = iv.id if iv else None
+
+        interview_data = None
+        if iv:
+            interview_data = {
+                "duration_seconds": iv.duration_seconds,
+                "ended_at": iv.ended_at.isoformat() if iv.ended_at else None,
+                "attempt_number": iv.attempt_number,
+            }
+
+        analysis = analyses.get(iv_id) if iv_id else None
+        scores = analysis.scores if analysis else None
+        skill_scores = analysis.skill_scores if analysis else None
+
+        report = reports.get(iv_id) if iv_id else None
+        report_summary = None
+        if report and report.content and isinstance(report.content, dict):
+            report_summary = report.content.get("summary")
+
+        items.append(
+            CandidateComparisonItem(
+                id=str(c.id),
+                name=c.name,
+                email=c.email,
+                phone=c.phone,
+                cv_score=c.cv_score,
+                cv_score_explanation=c.cv_score_explanation,
+                pipeline_status=c.pipeline_status,
+                interview=interview_data,
+                scores=scores,
+                skill_scores=skill_scores,
+                report_summary=report_summary,
+            )
+        )
+
+    return items
