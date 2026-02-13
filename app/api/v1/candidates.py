@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import async_session, get_db
-from app.core.dependencies import get_tenant_id, require_role
+from app.core.dependencies import check_free_tier_limit, get_tenant_id, require_role
 from app.models.candidate import Candidate
 from app.models.consent import Consent
 from app.models.interview import Interview
@@ -464,6 +464,10 @@ async def bulk_action(
     )
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Poste introuvable")
+
+    # Free tier enforcement: check before scheduling interviews
+    if body.action == "schedule":
+        await check_free_tier_limit(db, current_user.tenant_id)
 
     results = []
     success_count = 0

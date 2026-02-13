@@ -1,8 +1,9 @@
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -55,3 +56,31 @@ def require_role(*allowed_roles: str):
         return current_user
 
     return dependency
+
+
+FREE_TIER_MONTHLY_LIMIT = 3
+
+
+async def check_free_tier_limit(db: AsyncSession, tenant_id: UUID) -> None:
+    """Raise HTTP 402 if the tenant is on the free plan and has reached the monthly interview limit."""
+    from app.models.interview import Interview
+    from app.models.tenant import Tenant
+
+    tenant = await db.get(Tenant, tenant_id)
+    if not tenant or tenant.plan != "free":
+        return  # Paid plan or unknown tenant — no limit
+
+    now = datetime.now(timezone.utc)
+    first_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    count = await db.scalar(
+        select(func.count(Interview.id))
+        .where(Interview.tenant_id == tenant_id)
+        .where(Interview.created_at >= first_of_month)
+    )
+
+    if count >= FREE_TIER_MONTHLY_LIMIT:
+        raise HTTPException(
+            status_code=402,
+            detail="Limite du plan gratuit atteinte (3 entretiens/mois). Passez au plan Pro.",
+        )

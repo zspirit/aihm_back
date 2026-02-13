@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_tenant_id
+from app.core.dependencies import check_free_tier_limit, get_tenant_id
 from app.models.analysis import Analysis
 from app.models.candidate import Candidate
 from app.models.consent import Consent
@@ -47,6 +47,9 @@ async def schedule_interview(
     candidate = result.scalar_one_or_none()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidat introuvable")
+
+    # Free tier enforcement
+    await check_free_tier_limit(db, tenant_id)
 
     if data.phone:
         candidate.phone = data.phone

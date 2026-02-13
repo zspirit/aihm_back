@@ -18,12 +18,30 @@ from app.schemas.position import (
     PositionImportTextRequest,
     PositionResponse,
     PositionUpdate,
+    normalize_skills,
 )
 from app.services.position_import import extract_position_from_text
 from app.services.position_templates import POSITION_TEMPLATES
 
 router = APIRouter(prefix="/positions", tags=["positions"])
 limiter = Limiter(key_func=get_remote_address)
+
+
+def _build_position_response(position, candidate_count: int = 0) -> PositionResponse:
+    """Build a PositionResponse with normalized skills (backward compatible)."""
+    return PositionResponse(
+        id=str(position.id),
+        title=position.title,
+        description=position.description,
+        required_skills=normalize_skills(position.required_skills or []),
+        seniority_level=position.seniority_level,
+        custom_questions=position.custom_questions,
+        status=position.status,
+        deadline=position.deadline,
+        created_by=str(position.created_by),
+        created_at=position.created_at,
+        candidate_count=candidate_count,
+    )
 
 
 @router.get("", response_model=PaginatedPositions)
@@ -62,20 +80,7 @@ async def list_positions(
     for pos in positions:
         count_result = await db.execute(select(func.count()).where(Candidate.position_id == pos.id))
         count = count_result.scalar()
-        resp = PositionResponse(
-            id=str(pos.id),
-            title=pos.title,
-            description=pos.description,
-            required_skills=pos.required_skills,
-            seniority_level=pos.seniority_level,
-            custom_questions=pos.custom_questions,
-            status=pos.status,
-            deadline=pos.deadline,
-            created_by=str(pos.created_by),
-            created_at=pos.created_at,
-            candidate_count=count,
-        )
-        responses.append(resp)
+        responses.append(_build_position_response(pos, candidate_count=count))
 
     return PaginatedPositions(
         items=responses,
@@ -104,19 +109,7 @@ async def create_position(
     db.add(position)
     await db.flush()
 
-    return PositionResponse(
-        id=str(position.id),
-        title=position.title,
-        description=position.description,
-        required_skills=position.required_skills,
-        seniority_level=position.seniority_level,
-        custom_questions=position.custom_questions,
-        status=position.status,
-        deadline=position.deadline,
-        created_by=str(position.created_by),
-        created_at=position.created_at,
-        candidate_count=0,
-    )
+    return _build_position_response(position, candidate_count=0)
 
 
 @router.get("/templates")
@@ -180,19 +173,7 @@ async def duplicate_position(
     db.add(new_position)
     await db.flush()
 
-    return PositionResponse(
-        id=str(new_position.id),
-        title=new_position.title,
-        description=new_position.description,
-        required_skills=new_position.required_skills,
-        seniority_level=new_position.seniority_level,
-        custom_questions=new_position.custom_questions,
-        status=new_position.status,
-        deadline=new_position.deadline,
-        created_by=str(new_position.created_by),
-        created_at=new_position.created_at,
-        candidate_count=0,
-    )
+    return _build_position_response(new_position, candidate_count=0)
 
 
 @router.get("/{position_id}", response_model=PositionResponse)
@@ -213,19 +194,7 @@ async def get_position(
     )
     count = count_result.scalar()
 
-    return PositionResponse(
-        id=str(position.id),
-        title=position.title,
-        description=position.description,
-        required_skills=position.required_skills,
-        seniority_level=position.seniority_level,
-        custom_questions=position.custom_questions,
-        status=position.status,
-        deadline=position.deadline,
-        created_by=str(position.created_by),
-        created_at=position.created_at,
-        candidate_count=count,
-    )
+    return _build_position_response(position, candidate_count=count)
 
 
 @router.put("/{position_id}", response_model=PositionResponse)
@@ -255,19 +224,7 @@ async def update_position(
     )
     count = count_result.scalar()
 
-    return PositionResponse(
-        id=str(position.id),
-        title=position.title,
-        description=position.description,
-        required_skills=position.required_skills,
-        seniority_level=position.seniority_level,
-        custom_questions=position.custom_questions,
-        status=position.status,
-        deadline=position.deadline,
-        created_by=str(position.created_by),
-        created_at=position.created_at,
-        candidate_count=count,
-    )
+    return _build_position_response(position, candidate_count=count)
 
 
 @router.delete("/{position_id}", status_code=status.HTTP_204_NO_CONTENT)
