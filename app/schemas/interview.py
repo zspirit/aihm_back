@@ -57,3 +57,32 @@ class ReportResponse(BaseModel):
     generated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class InterviewListItem(BaseModel):
+    id: str
+    candidate_id: str
+    candidate_name: str
+    position_id: str
+    position_title: str
+    status: str
+    scheduled_at: datetime | None
+    started_at: datetime | None
+    ended_at: datetime | None
+    duration_seconds: int | None
+    attempt_number: int
+    has_report: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PaginatedInterviews(BaseModel):
+    items: list[InterviewListItem]
+    total: int
+    page: int
+    page_size: int
+
+
+class InterviewUpdate(BaseModel):
+    scheduled_at: datetime

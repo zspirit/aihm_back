@@ -1,8 +1,9 @@
+from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -11,12 +12,16 @@ from app.models.analysis import Analysis
 from app.models.candidate import Candidate
 from app.models.consent import Consent
 from app.models.interview import Interview
+from app.models.position import Position
 from app.models.report import Report
 from app.models.transcription import Transcription
 from app.schemas.interview import (
     AnalysisResponse,
     InterviewCreate,
+    InterviewListItem,
     InterviewResponse,
+    InterviewUpdate,
+    PaginatedInterviews,
     ReportResponse,
     TranscriptionResponse,
 )
@@ -95,6 +100,165 @@ async def schedule_interview(
         attempt_number=interview.attempt_number,
         created_at=interview.created_at,
     )
+
+
+@router.get("/interviews", response_model=PaginatedInterviews)
+async def list_interviews(
+    status: str | None = Query(None),
+    position_id: UUID | None = Query(None),
+    candidate_name: str | None = Query(None),
+    date_from: datetime | None = Query(None),
+    date_to: datetime | None = Query(None),
+    sort_by: str = Query("created_at"),
+    sort_order: str = Query("desc"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    tenant_id: UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db),
+):
+    # Base query with joins
+    base_query = (
+        select(
+            Interview,
+            Candidate.name.label("candidate_name"),
+            Position.title.label("position_title"),
+            func.count(Report.id).label("report_count"),
+        )
+        .join(Candidate, Interview.candidate_id == Candidate.id)
+        .join(Position, Interview.position_id == Position.id)
+        .outerjoin(Report, Interview.id == Report.interview_id)
+        .where(Interview.tenant_id == tenant_id)
+    )
+
+    # Apply filters
+    if status:
+        base_query = base_query.where(Interview.status == status)
+    if position_id:
+        base_query = base_query.where(Interview.position_id == position_id)
+    if candidate_name:
+        base_query = base_query.where(Candidate.name.ilike(f"%{candidate_name}%"))
+    if date_from:
+        base_query = base_query.where(Interview.created_at >= date_from)
+    if date_to:
+        base_query = base_query.where(Interview.created_at <= date_to)
+
+    # Group by
+    base_query = base_query.group_by(Interview.id, Candidate.name, Position.title)
+
+    # Count query for total
+    count_query = (
+        select(func.count(func.distinct(Interview.id)))
+        .select_from(Interview)
+        .join(Candidate, Interview.candidate_id == Candidate.id)
+        .join(Position, Interview.position_id == Position.id)
+        .where(Interview.tenant_id == tenant_id)
+    )
+    if status:
+        count_query = count_query.where(Interview.status == status)
+    if position_id:
+        count_query = count_query.where(Interview.position_id == position_id)
+    if candidate_name:
+        count_query = count_query.where(Candidate.name.ilike(f"%{candidate_name}%"))
+    if date_from:
+        count_query = count_query.where(Interview.created_at >= date_from)
+    if date_to:
+        count_query = count_query.where(Interview.created_at <= date_to)
+
+    total_result = await db.execute(count_query)
+    total = total_result.scalar()
+
+    # Sort
+    sort_column = getattr(Interview, sort_by, Interview.created_at)
+    if sort_order == "asc":
+        base_query = base_query.order_by(sort_column.asc())
+    else:
+        base_query = base_query.order_by(sort_column.desc())
+
+    # Paginate
+    base_query = base_query.offset((page - 1) * page_size).limit(page_size)
+
+    result = await db.execute(base_query)
+    rows = result.all()
+
+    items = [
+        InterviewListItem(
+            id=str(row.Interview.id),
+            candidate_id=str(row.Interview.candidate_id),
+            candidate_name=row.candidate_name,
+            position_id=str(row.Interview.position_id),
+            position_title=row.position_title,
+            status=row.Interview.status,
+            scheduled_at=row.Interview.scheduled_at,
+            started_at=row.Interview.started_at,
+            ended_at=row.Interview.ended_at,
+            duration_seconds=row.Interview.duration_seconds,
+            attempt_number=row.Interview.attempt_number,
+            has_report=row.report_count > 0,
+            created_at=row.Interview.created_at,
+        )
+        for row in rows
+    ]
+
+    return PaginatedInterviews(items=items, total=total, page=page, page_size=page_size)
+
+
+@router.patch("/interviews/{interview_id}", response_model=InterviewResponse)
+async def reschedule_interview(
+    interview_id: UUID,
+    data: InterviewUpdate,
+    tenant_id: UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Interview).where(Interview.id == interview_id, Interview.tenant_id == tenant_id)
+    )
+    interview = result.scalar_one_or_none()
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview introuvable")
+
+    if interview.status != "scheduled":
+        raise HTTPException(
+            status_code=400, detail="Seuls les entretiens planifies peuvent etre replanifies"
+        )
+
+    interview.scheduled_at = data.scheduled_at
+    await db.flush()
+
+    return InterviewResponse(
+        id=str(interview.id),
+        candidate_id=str(interview.candidate_id),
+        position_id=str(interview.position_id),
+        status=interview.status,
+        scheduled_at=interview.scheduled_at,
+        started_at=interview.started_at,
+        ended_at=interview.ended_at,
+        duration_seconds=interview.duration_seconds,
+        questions_asked=interview.questions_asked,
+        attempt_number=interview.attempt_number,
+        created_at=interview.created_at,
+    )
+
+
+@router.delete("/interviews/{interview_id}", status_code=204)
+async def cancel_interview(
+    interview_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Interview).where(Interview.id == interview_id, Interview.tenant_id == tenant_id)
+    )
+    interview = result.scalar_one_or_none()
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview introuvable")
+
+    if interview.status != "scheduled":
+        raise HTTPException(
+            status_code=400, detail="Seuls les entretiens planifies peuvent etre annules"
+        )
+
+    interview.status = "cancelled"
+    await db.flush()
 
 
 @router.get("/interviews/{interview_id}", response_model=InterviewResponse)

@@ -94,6 +94,7 @@ from app.api.v1.webhooks_config import router as webhooks_config_router
 from app.api.v1.notifications import router as notifications_router
 from app.api.v1.bulk_import import router as bulk_import_router
 from app.api.v1.matching import router as matching_router
+from app.api.v1.reports import router as reports_router
 
 app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
 app.include_router(positions_router, prefix=settings.API_V1_PREFIX)
@@ -107,6 +108,7 @@ app.include_router(copilot_router, prefix=settings.API_V1_PREFIX)
 app.include_router(notifications_router, prefix=settings.API_V1_PREFIX)
 app.include_router(bulk_import_router, prefix=settings.API_V1_PREFIX)
 app.include_router(matching_router, prefix=settings.API_V1_PREFIX)
+app.include_router(reports_router, prefix=settings.API_V1_PREFIX)
 
 
 # --- Health Check enrichi ---
