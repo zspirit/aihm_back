@@ -180,6 +180,24 @@ FICHE DE POSTE:
 CV PARSE:
 {json.dumps(parsed_data, ensure_ascii=False)[:2000]}
 
+PONDERATION DES CRITERES:
+- skills_match : 50% du score global (competences techniques et fonctionnelles)
+- experience_match : 30% du score global (annees + pertinence du parcours)
+- education_match : 20% du score global (diplomes, certifications)
+Le score global = (skills_match * 0.5) + (experience_match * 0.3) + (education_match * 0.2)
+
+GUIDE D'INTERPRETATION DES SCORES:
+- Score 80+ : excellent match, le candidat possede la grande majorite des competences requises et une experience tres pertinente
+- Score 60+ : bon match, le candidat possede la plupart des competences requises, quelques lacunes mineures
+- Score 40-59 : match partiel, lacunes significatives mais potentiel de progression
+- Score <40 : faible correspondance avec le poste
+
+INSTRUCTIONS D'EVALUATION:
+- Valorise les competences transferables : une competence acquise dans un autre domaine reste une competence valide
+- Ne penalise pas excessivement l'experience dans un secteur different si les competences techniques sont presentes
+- Prends en compte les certifications et formations continues comme indicateurs de competences
+- Evalue l'experience par rapport au niveau demande (junior/senior) — ne surpenalise pas un profil junior pour manque d'annees
+
 REGLES STRICTES:
 - Score de 0 a 100, base sur des criteres observables uniquement
 - PAS d'inference de personnalite ou de motivation
@@ -190,7 +208,7 @@ Format JSON:
 {{
     "score": 75,
     "explanation": {{
-        "skills_match": {{"score": 80, "matched": ["skill1"], "missing": ["skill2"], "justification": "..."}},
+        "skills_match": {{"score": 80, "matched": ["skill1"], "missing": ["skill2"], "transferable": ["skill3"], "justification": "..."}},
         "experience_match": {{"score": 70, "justification": "..."}},
         "education_match": {{"score": 75, "justification": "..."}}
     }}

@@ -102,6 +102,30 @@ TRANSCRIPTION DE L'ENTRETIEN:
 SEGMENTS PAR QUESTION:
 {json.dumps(segments, ensure_ascii=False)[:2000]}
 
+INSTRUCTIONS D'ANALYSE:
+
+1. COMPETENCES — Distingue clairement:
+   - "Competences declarees" : le candidat affirme maitriser X mais sans donner d'exemple concret
+   - "Competences demontrees" : le candidat fournit un exemple precis, une situation vecue, ou une explication technique qui prouve la maitrise
+   Dans le champ "evidence", indique si c'est "declare" ou "demontre" avec la citation correspondante.
+
+2. EXEMPLES D'EXPERIENCE — Utilise la methode STAR:
+   - Situation : quel etait le contexte ?
+   - Task : quelle etait la responsabilite du candidat ?
+   - Action : qu'a-t-il concretement fait ?
+   - Result : quel a ete le resultat mesurable ?
+   Si le candidat ne fournit pas tous les elements STAR, note explicitement les elements manquants.
+
+3. COMMUNICATION — Evalue sur ces criteres UNIQUEMENT:
+   - Completude des reponses : le candidat repond-il a la question posee de maniere complete ?
+   - Exemples pertinents : fournit-il des exemples concrets et en lien avec la question ?
+   - Clarte d'expression : les reponses sont-elles comprehensibles et bien structurees ?
+   NE PAS evaluer : l'accent, la qualite vocale, le style de parole, la vitesse d'elocution.
+
+4. QUESTIONS SANS REPONSE:
+   Si une question n'a pas recu de reponse, ou si la reponse est trop breve/hors-sujet, note-le EXPLICITEMENT
+   dans score_explanations plutot que de simplement attribuer un score bas sans explication.
+
 REGLES STRICTES (GUARDRAILS):
 - Analyse basee UNIQUEMENT sur les signaux observables dans les reponses
 - PAS d'inference de personnalite, d'emotion ou de motivation
@@ -113,10 +137,10 @@ REGLES STRICTES (GUARDRAILS):
 Format JSON:
 {{
     "skills_extracted": [
-        {{"skill": "nom", "evidence": "citation ou element de la transcription", "level": "debutant|intermediaire|avance"}}
+        {{"skill": "nom", "evidence": "citation ou element de la transcription", "level": "debutant|intermediaire|avance", "type": "declare|demontre"}}
     ],
     "experience_examples": [
-        {{"context": "situation decrite", "actions": "ce que le candidat a fait", "result": "resultat mentionne"}}
+        {{"situation": "contexte decrit", "task": "responsabilite", "action": "ce que le candidat a fait", "result": "resultat mentionne", "missing_star_elements": ["element manquant si applicable"]}}
     ],
     "communication_indicators": {{
         "clarity": {{"score": 75, "evidence": "..."}},
@@ -133,7 +157,8 @@ Format JSON:
         "technical": "justification basee sur les reponses...",
         "experience": "justification...",
         "communication": "justification...",
-        "global": "moyenne ponderee expliquee..."
+        "global": "moyenne ponderee expliquee...",
+        "unanswered_questions": ["question X: pas de reponse fournie"]
     }}
 }}""",
             }

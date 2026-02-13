@@ -191,7 +191,7 @@ def send_consent_reminder(candidate_id: str):
 
         send_email.delay(
             candidate.email,
-            f"Rappel : Entretien {position.title} - {tenant.name}",
+            f"Rappel : Votre entretien avec {tenant.name}",
             html,
         )
 
@@ -202,6 +202,106 @@ def send_consent_reminder(candidate_id: str):
             )
 
         logger.info("consent_reminder_sent", candidate_id=candidate_id)
+
+    finally:
+        session.close()
+
+
+@shared_task(name="notifications.send_report_ready")
+def send_report_ready(interview_id: str):
+    """Send email to all admin/recruiter users in tenant when report is ready."""
+    from app.workers.cv_processing import get_sync_session
+
+    session = get_sync_session()
+    try:
+        from uuid import UUID
+
+        from sqlalchemy import select
+
+        from app.core.config import get_settings
+        from app.models.candidate import Candidate
+        from app.models.interview import Interview
+        from app.models.notification import Notification
+        from app.models.position import Position
+        from app.models.report import Report
+        from app.models.tenant import Tenant
+        from app.models.user import User
+        from app.services.email import render
+
+        settings = get_settings()
+        interview = session.get(Interview, UUID(interview_id))
+        if not interview:
+            logger.warning("report_ready_no_interview", interview_id=interview_id)
+            return
+
+        candidate = session.get(Candidate, interview.candidate_id)
+        if not candidate:
+            return
+
+        position = session.get(Position, interview.position_id)
+        tenant = session.get(Tenant, interview.tenant_id)
+
+        # Get global score from report content if available
+        report_result = session.execute(
+            select(Report).where(Report.interview_id == interview.id)
+        )
+        report = report_result.scalar_one_or_none()
+        global_score = None
+        if report and report.content and isinstance(report.content, dict):
+            global_score = report.content.get("global_score")
+
+        # Build report URL
+        report_url = f"{settings.FRONTEND_URL}/candidates/{candidate.id}"
+
+        # Find all admin/recruiter users in tenant
+        users_result = session.execute(
+            select(User).where(
+                User.tenant_id == interview.tenant_id,
+                User.role.in_(["admin", "recruiter"]),
+            )
+        )
+        users = users_result.scalars().all()
+
+        for user in users:
+            # Render email
+            html = render(
+                "email/report_ready.html",
+                user_name=user.full_name,
+                candidate_name=candidate.name,
+                position_title=position.title,
+                tenant_name=tenant.name,
+                global_score=global_score,
+                report_url=report_url,
+            )
+
+            send_email.delay(
+                user.email,
+                f"Rapport d'evaluation disponible — {candidate.name}",
+                html,
+            )
+
+            # Create in-app notification
+            notification = Notification(
+                tenant_id=interview.tenant_id,
+                user_id=user.id,
+                type="report_ready",
+                title="Rapport disponible",
+                message=f"Le rapport d'evaluation de {candidate.name} pour {position.title} est pret.",
+                data={
+                    "interview_id": str(interview.id),
+                    "candidate_id": str(candidate.id),
+                    "position_id": str(position.id),
+                    "global_score": global_score,
+                },
+            )
+            session.add(notification)
+
+        session.commit()
+        logger.info(
+            "report_ready_notifications_sent",
+            interview_id=interview_id,
+            user_count=len(users),
+        )
 
     finally:
         session.close()

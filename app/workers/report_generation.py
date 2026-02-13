@@ -57,6 +57,18 @@ def generate_report(self, interview_id: str):
 
         logger.info("report_generation_done", interview_id=interview_id, pdf_path=pdf_path)
 
+        # Trigger report-ready email notification
+        try:
+            from app.workers.notifications import send_report_ready
+
+            send_report_ready.delay(str(interview.id))
+            logger.info("report_ready_email_triggered", interview_id=interview_id)
+        except Exception as e:
+            logger.warning("report_ready_email_trigger_failed", interview_id=interview_id, error=str(e))
+
+        # Cleanup audio file from MinIO (no longer needed after report is generated)
+        _cleanup_audio(interview)
+
     except Exception as e:
         session.rollback()
         logger.error("report_generation_error", interview_id=interview_id, error=str(e))
@@ -91,6 +103,20 @@ def _generate_and_upload_pdf(content: dict, interview_id: str) -> str | None:
         return None
 
 
+def _cleanup_audio(interview):
+    """Delete audio file from MinIO after report generation is complete."""
+    if not interview.audio_file_path:
+        return
+    try:
+        from app.services.storage import delete_file
+
+        delete_file(interview.audio_file_path)
+        logger.info("audio_file_cleaned_up", audio_path=interview.audio_file_path)
+    except Exception as e:
+        # Non-critical: log warning but don't fail the pipeline
+        logger.warning("audio_cleanup_failed", audio_path=interview.audio_file_path, error=str(e))
+
+
 def build_report(candidate, position, interview, analysis, transcription) -> dict:
     from anthropic import Anthropic
 
@@ -109,6 +135,10 @@ def build_report(candidate, position, interview, analysis, transcription) -> dic
             "communication_indicators": analysis.communication_indicators,
         }
 
+    transcription_text = ""
+    if transcription and transcription.full_text:
+        transcription_text = transcription.full_text[:2000]
+
     response = client.messages.create(
         model=settings.ANTHROPIC_MODEL,
         max_tokens=2000,
@@ -126,9 +156,28 @@ DATE: {interview.ended_at or interview.created_at}
 ANALYSE:
 {json.dumps(analysis_data, ensure_ascii=False)[:2500]}
 
+TRANSCRIPTION (extraits):
+{transcription_text}
+
+INSTRUCTIONS DE REDACTION:
+
+1. SYNTHESE: Redige un resume de 3-4 phrases qu'un recruteur presse peut scanner en 10 secondes.
+   Le resume doit contenir: le score global, les 1-2 points forts principaux, et le point d'attention principal.
+
+2. POINTS FORTS: Chaque point fort DOIT referencer un moment precis de l'entretien.
+   Mauvais exemple: "Bonne maitrise de Python"
+   Bon exemple: "Maitrise de Python demontree en expliquant la mise en place d'un pipeline de donnees avec pandas et SQLAlchemy pour son ancien employeur"
+
+3. POINTS A APPROFONDIR: Formule-les comme des questions pour un entretien de suivi, PAS comme des faiblesses.
+   Mauvais exemple: "Faible en gestion de projet"
+   Bon exemple: "Comment gerez-vous la priorisation quand plusieurs projets ont des deadlines concurrentes ?"
+
+4. VERBATIMS: Inclus 2-3 citations cles directement extraites de la transcription qui representent le mieux les reponses du candidat.
+   Choisis des citations qui illustrent des competences ou experiences concretes.
+
 REGLES STRICTES:
 - Aucune recommandation d'embauche (PAS de "nous recommandons", "ce candidat devrait etre...")
-- Basé uniquement sur des signaux observables
+- Base uniquement sur des signaux observables
 - PAS d'inference de personnalite ou d'emotion
 - Le rapport INFORME, le recruteur DECIDE
 
@@ -145,19 +194,20 @@ Format JSON:
         "communication": 0
     }},
     "strengths": [
-        "Point fort 1 avec evidence",
-        "Point fort 2 avec evidence"
+        "Point fort 1 avec evidence specifique de l'entretien",
+        "Point fort 2 avec evidence specifique de l'entretien"
     ],
     "areas_to_explore": [
-        "Element a approfondir 1",
-        "Element a approfondir 2"
+        "Question de suivi 1 formulee comme question",
+        "Question de suivi 2 formulee comme question"
     ],
     "skills_assessment": [
         {{"skill": "...", "level": "...", "evidence": "..."}}
     ],
     "key_quotes": [
-        "Verbatim pertinent 1",
-        "Verbatim pertinent 2"
+        "Citation verbatim 1 extraite de la transcription",
+        "Citation verbatim 2 extraite de la transcription",
+        "Citation verbatim 3 extraite de la transcription"
     ],
     "metadata": {{
         "interview_duration": "{interview.duration_seconds or 0}s",

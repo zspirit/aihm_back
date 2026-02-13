@@ -1,18 +1,30 @@
 {% extends "email/base.html" %}
 {% block content %}
-<h2>Rappel : entretien en attente</h2>
+<h2>Rappel : Votre entretien avec {{ tenant_name }}</h2>
 <p>Bonjour {{ candidate_name }},</p>
-<p>Nous vous avons invite a un entretien telephonique pour le poste de
+<p>Nous vous avons recemment invite a un entretien telephonique pour le poste de
 <strong>{{ position_title }}</strong> chez {{ tenant_name }}.</p>
-<p>Votre consentement est toujours en attente. L'entretien ne prend que 5 a 10 minutes.</p>
+<p>Votre consentement est toujours en attente. Nous vous invitons a accepter
+pour ne pas manquer cette opportunite.</p>
+
+<div class="info-box">
+  <p><strong>Duree estimee :</strong> 5 a 10 minutes</p>
+  <p><strong>Format :</strong> Un assistant IA vous posera des questions sur votre parcours et vos competences</p>
+  <p><strong>Enregistrement :</strong> L'appel sera enregistre pour analyse par l'equipe de recrutement</p>
+</div>
 
 <p style="text-align: center;">
-  <a href="{{ consent_url }}" class="btn">Accepter et planifier</a>
+  <a href="{{ consent_url }}" class="btn">Donner mon consentement</a>
+</p>
+
+<p style="font-size: 13px; color: #EF4444; text-align: center; margin-top: 4px;">
+  Ce lien expire dans 48h.
 </p>
 
 <hr class="divider">
 <p style="font-size: 13px; color: #6B7280;">
   Si vous ne souhaitez pas participer, vous pouvez ignorer cet email.
-  Aucun appel ne sera effectue sans votre accord.
+  Aucun appel ne sera effectue sans votre accord. Vos donnees sont traitees
+  conformement a la loi 09-08 relative a la protection des donnees personnelles.
 </p>
 {% endblock %}
