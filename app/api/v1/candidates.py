@@ -2,6 +2,7 @@ import asyncio
 import csv
 import io
 import json
+import os
 import secrets
 from typing import List
 from uuid import UUID
@@ -18,7 +19,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import Response, StreamingResponse
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -32,19 +33,109 @@ from app.models.user import User
 from app.schemas.bulk_import import BulkActionRequest, BulkActionResponse, BulkActionResult
 from app.models.analysis import Analysis
 from app.models.report import Report
+from app.models.transcription import Transcription
 from app.schemas.candidate import (
     CandidateComparisonItem,
+    CandidateGlobalListResponse,
     CandidateListResponse,
     CandidateResponse,
     PaginatedCandidates,
+    PaginatedCandidatesGlobal,
 )
 from app.services.audit import log_action
 from app.services.storage import upload_file
+
+MAX_CV_SIZE = 10 * 1024 * 1024  # 10 MB
+ALLOWED_CV_TYPES = {
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+ALLOWED_CV_EXTENSIONS = {".pdf", ".doc", ".docx"}
 
 TERMINAL_STATUSES = {"cv_analyzed", "evaluated", "call_done"}
 
 router = APIRouter(tags=["candidates"])
 settings = get_settings()
+
+
+@router.get("/candidates", response_model=PaginatedCandidatesGlobal)
+async def list_all_candidates(
+    search: str | None = Query(None, description="Search by name or email"),
+    status_filter: str | None = Query(None, description="Filter by pipeline status"),
+    position_id: str | None = Query(None, description="Filter by position"),
+    sort_by: str = Query("created_at", description="Sort field: created_at, cv_score, name"),
+    sort_order: str = Query("desc", description="Sort order: asc, desc"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    tenant_id: UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all candidates across all positions for the tenant."""
+    query = (
+        select(Candidate, func.count(Interview.id).label("interview_count"), Position.title)
+        .outerjoin(Interview, Candidate.id == Interview.candidate_id)
+        .join(Position, Candidate.position_id == Position.id)
+        .where(Candidate.tenant_id == tenant_id)
+        .group_by(Candidate.id, Position.title)
+    )
+    count_query = (
+        select(func.count())
+        .select_from(Candidate)
+        .where(Candidate.tenant_id == tenant_id)
+    )
+
+    if search:
+        search_filter = or_(
+            Candidate.name.ilike(f"%{search}%"),
+            Candidate.email.ilike(f"%{search}%"),
+        )
+        query = query.where(search_filter)
+        count_query = count_query.where(search_filter)
+
+    if status_filter:
+        query = query.where(Candidate.pipeline_status == status_filter)
+        count_query = count_query.where(Candidate.pipeline_status == status_filter)
+
+    if position_id:
+        query = query.where(Candidate.position_id == position_id)
+        count_query = count_query.where(Candidate.position_id == position_id)
+
+    total = (await db.execute(count_query)).scalar()
+
+    if sort_by == "cv_score":
+        order = Candidate.cv_score.desc().nulls_last() if sort_order == "desc" else Candidate.cv_score.asc().nulls_last()
+    elif sort_by == "name":
+        order = Candidate.name.desc() if sort_order == "desc" else Candidate.name.asc()
+    else:
+        order = Candidate.created_at.desc() if sort_order == "desc" else Candidate.created_at.asc()
+    query = query.order_by(order)
+
+    query = query.offset((page - 1) * page_size).limit(page_size)
+
+    result = await db.execute(query)
+    items = [
+        CandidateGlobalListResponse(
+            id=str(row[0].id),
+            name=row[0].name,
+            email=row[0].email,
+            phone=row[0].phone,
+            cv_score=row[0].cv_score,
+            pipeline_status=row[0].pipeline_status,
+            interview_count=row[1],
+            position_id=str(row[0].position_id),
+            position_title=row[2],
+            created_at=row[0].created_at,
+        )
+        for row in result.all()
+    ]
+
+    return PaginatedCandidatesGlobal(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.get("/positions/{position_id}/candidates", response_model=PaginatedCandidates)
@@ -64,9 +155,14 @@ async def list_candidates(
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Poste introuvable")
 
-    query = select(Candidate).where(
-        Candidate.position_id == position_id,
-        Candidate.tenant_id == tenant_id,
+    query = (
+        select(Candidate, func.count(Interview.id).label("interview_count"))
+        .outerjoin(Interview, Candidate.id == Interview.candidate_id)
+        .where(
+            Candidate.position_id == position_id,
+            Candidate.tenant_id == tenant_id,
+        )
+        .group_by(Candidate.id)
     )
     count_query = (
         select(func.count())
@@ -101,15 +197,16 @@ async def list_candidates(
     result = await db.execute(query)
     items = [
         CandidateListResponse(
-            id=str(c.id),
-            name=c.name,
-            email=c.email,
-            phone=c.phone,
-            cv_score=c.cv_score,
-            pipeline_status=c.pipeline_status,
-            created_at=c.created_at,
+            id=str(row[0].id),
+            name=row[0].name,
+            email=row[0].email,
+            phone=row[0].phone,
+            cv_score=row[0].cv_score,
+            pipeline_status=row[0].pipeline_status,
+            interview_count=row[1],
+            created_at=row[0].created_at,
         )
-        for c in result.scalars().all()
+        for row in result.all()
     ]
 
     return PaginatedCandidates(
@@ -144,6 +241,20 @@ async def create_candidate(
 
     cv_path = None
     if cv:
+        # Validate file extension
+        ext = os.path.splitext(cv.filename or "")[1].lower()
+        if ext not in ALLOWED_CV_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail="Format de fichier non supporte. Formats acceptes: PDF, DOC, DOCX",
+            )
+
+        # Validate file size (read content once)
+        contents = await cv.read()
+        if len(contents) > MAX_CV_SIZE:
+            raise HTTPException(status_code=400, detail="Le fichier ne doit pas depasser 10 MB")
+        await cv.seek(0)  # Reset for later processing
+
         cv_path = await upload_file(
             cv, settings.S3_BUCKET_CVS, f"{current_user.tenant_id}/{position_id}"
         )
@@ -168,9 +279,12 @@ async def create_candidate(
         db.add(consent)
 
     if cv_path:
-        from app.workers.cv_processing import process_cv
+        try:
+            from app.workers.cv_processing import process_cv
 
-        process_cv.delay(str(candidate.id))
+            process_cv.delay(str(candidate.id))
+        except Exception:
+            pass  # Celery worker unavailable, CV will be processed later
 
     return CandidateResponse(
         id=str(candidate.id),
@@ -208,6 +322,24 @@ async def batch_create_candidates(
     created = []
     for cv_file in cvs:
         filename = cv_file.filename or "candidat"
+
+        # Validate file extension
+        ext = os.path.splitext(filename)[1].lower()
+        if ext not in ALLOWED_CV_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Format de fichier non supporte pour '{filename}'. Formats acceptes: PDF, DOC, DOCX",
+            )
+
+        # Validate file size
+        contents = await cv_file.read()
+        if len(contents) > MAX_CV_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Le fichier '{filename}' ne doit pas depasser 10 MB",
+            )
+        await cv_file.seek(0)
+
         name = filename.rsplit(".", 1)[0].replace("_", " ").replace("-", " ").strip()
         if not name:
             name = "Candidat"
@@ -233,9 +365,12 @@ async def batch_create_candidates(
             )
             db.add(consent)
 
-        from app.workers.cv_processing import process_cv
+        try:
+            from app.workers.cv_processing import process_cv
 
-        process_cv.delay(str(candidate.id))
+            process_cv.delay(str(candidate.id))
+        except Exception:
+            pass  # Celery worker unavailable
 
         created.append(
             {
@@ -330,6 +465,43 @@ async def get_candidate(
     )
 
 
+@router.get("/candidates/{candidate_id}/interviews")
+async def list_candidate_interviews(
+    candidate_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all interviews for a candidate, with position title."""
+    result = await db.execute(
+        select(Candidate).where(Candidate.id == candidate_id, Candidate.tenant_id == tenant_id)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Candidat introuvable")
+
+    query = (
+        select(Interview, Position.title)
+        .join(Position, Interview.position_id == Position.id)
+        .where(Interview.candidate_id == candidate_id)
+        .order_by(Interview.created_at.desc())
+    )
+    rows = (await db.execute(query)).all()
+
+    return [
+        {
+            "id": str(iv.id),
+            "position_id": str(iv.position_id),
+            "position_title": pos_title,
+            "status": iv.status,
+            "started_at": iv.started_at.isoformat() if iv.started_at else None,
+            "ended_at": iv.ended_at.isoformat() if iv.ended_at else None,
+            "duration_seconds": iv.duration_seconds,
+            "attempt_number": iv.attempt_number,
+            "created_at": iv.created_at.isoformat() if iv.created_at else None,
+        }
+        for iv, pos_title in rows
+    ]
+
+
 @router.post("/candidates/{candidate_id}/grant-consent")
 async def grant_consent_admin(
     candidate_id: UUID,
@@ -360,6 +532,36 @@ async def grant_consent_admin(
     return {"status": "ok", "consents_granted": len(consents)}
 
 
+@router.post("/candidates/{candidate_id}/reprocess-cv")
+async def reprocess_cv(
+    candidate_id: UUID,
+    current_user: User = Depends(require_role("admin", "recruiter")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-trigger CV analysis for a candidate that has a CV file but no parsed data."""
+    result = await db.execute(
+        select(Candidate).where(
+            Candidate.id == candidate_id,
+            Candidate.tenant_id == current_user.tenant_id,
+        )
+    )
+    candidate = result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidat introuvable")
+
+    if not candidate.cv_file_path:
+        raise HTTPException(status_code=400, detail="Aucun fichier CV associe a ce candidat")
+
+    try:
+        from app.workers.cv_processing import process_cv
+
+        process_cv.delay(str(candidate.id))
+    except Exception:
+        return {"status": "warning", "message": "Analyse CV demandee mais worker indisponible"}
+
+    return {"status": "ok", "message": "Analyse CV relancee"}
+
+
 @router.delete("/candidates/{candidate_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_candidate(
     candidate_id: UUID,
@@ -386,7 +588,21 @@ async def delete_candidate(
         details={"name": candidate.name, "email": candidate.email},
     )
 
-    await db.delete(candidate)
+    # Delete related records explicitly (async SQLAlchemy can't lazy-load for ORM cascade)
+    interview_ids_result = await db.execute(
+        select(Interview.id).where(Interview.candidate_id == candidate_id)
+    )
+    interview_ids = [row[0] for row in interview_ids_result.all()]
+
+    if interview_ids:
+        await db.execute(delete(Report).where(Report.interview_id.in_(interview_ids)))
+        await db.execute(delete(Transcription).where(Transcription.interview_id.in_(interview_ids)))
+        await db.execute(delete(Analysis).where(Analysis.interview_id.in_(interview_ids)))
+        await db.execute(delete(Interview).where(Interview.candidate_id == candidate_id))
+
+    await db.execute(delete(Consent).where(Consent.candidate_id == candidate_id))
+    await db.execute(delete(Candidate).where(Candidate.id == candidate_id))
+    await db.commit()
 
 
 @router.get("/candidates/{candidate_id}/events")
@@ -564,9 +780,12 @@ async def bulk_action(
                 candidate.pipeline_status = "call_scheduled"
 
                 # Trigger call
-                from app.workers.telephony import initiate_call
+                try:
+                    from app.workers.telephony import initiate_call
 
-                initiate_call.delay(str(interview.id))
+                    initiate_call.delay(str(interview.id))
+                except Exception:
+                    pass  # Celery worker unavailable
 
                 results.append(
                     BulkActionResult(
@@ -598,7 +817,18 @@ async def bulk_action(
                     entity_id=str(candidate_id),
                     details={"name": candidate.name, "email": candidate.email},
                 )
-                await db.delete(candidate)
+                # Delete related records explicitly
+                iids_result = await db.execute(
+                    select(Interview.id).where(Interview.candidate_id == candidate_id)
+                )
+                iids = [r[0] for r in iids_result.all()]
+                if iids:
+                    await db.execute(delete(Report).where(Report.interview_id.in_(iids)))
+                    await db.execute(delete(Transcription).where(Transcription.interview_id.in_(iids)))
+                    await db.execute(delete(Analysis).where(Analysis.interview_id.in_(iids)))
+                    await db.execute(delete(Interview).where(Interview.candidate_id == candidate_id))
+                await db.execute(delete(Consent).where(Consent.candidate_id == candidate_id))
+                await db.execute(delete(Candidate).where(Candidate.id == candidate_id))
                 results.append(
                     BulkActionResult(
                         candidate_id=candidate_id_str,
@@ -625,6 +855,73 @@ async def bulk_action(
         failed=failed_count,
         details=results,
     )
+
+
+@router.get("/candidates/{candidate_id}/position-matches")
+async def candidate_position_matches(
+    candidate_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Find other active positions this candidate could match with, based on skill overlap."""
+    result = await db.execute(
+        select(Candidate).where(Candidate.id == candidate_id, Candidate.tenant_id == tenant_id)
+    )
+    candidate = result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidat introuvable")
+
+    cv_data = candidate.cv_parsed_data or {}
+    candidate_skills = [s.lower() for s in cv_data.get("skills", [])]
+
+    if not candidate_skills:
+        return {"matches": []}
+
+    # Get all active positions except the candidate's current one
+    positions_result = await db.execute(
+        select(Position).where(
+            Position.tenant_id == tenant_id,
+            Position.status == "active",
+            Position.id != candidate.position_id,
+        )
+    )
+    positions = positions_result.scalars().all()
+
+    matches = []
+    for pos in positions:
+        required_skills = pos.required_skills or []
+        if not required_skills:
+            continue
+
+        required_lower = []
+        for rs in required_skills:
+            name = (rs if isinstance(rs, str) else rs.get("name", "")).lower()
+            if name:
+                required_lower.append(name)
+
+        if not required_lower:
+            continue
+
+        # Calculate overlap
+        matched_count = 0
+        for rs in required_lower:
+            for cs in candidate_skills:
+                if rs in cs or cs in rs:
+                    matched_count += 1
+                    break
+
+        score = round((matched_count / len(required_lower)) * 100)
+        if score > 0:
+            matches.append({
+                "position_id": str(pos.id),
+                "title": pos.title,
+                "match_score": score,
+                "matched_skills": matched_count,
+                "total_required": len(required_lower),
+            })
+
+    matches.sort(key=lambda x: x["match_score"], reverse=True)
+    return {"matches": matches[:10]}
 
 
 @router.get(
@@ -751,6 +1048,7 @@ async def compare_candidates(
                 phone=c.phone,
                 cv_score=c.cv_score,
                 cv_score_explanation=c.cv_score_explanation,
+                cv_parsed_data=c.cv_parsed_data,
                 pipeline_status=c.pipeline_status,
                 interview=interview_data,
                 scores=scores,

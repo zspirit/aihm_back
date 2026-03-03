@@ -26,10 +26,16 @@ from app.schemas.interview import (
     ReportResponse,
     TranscriptionResponse,
 )
+import structlog
+
 from app.services.audit import log_action
 from app.services.storage import download_file
 
+logger = structlog.get_logger()
+
 router = APIRouter(tags=["interviews"])
+
+ALLOWED_SORT_FIELDS = {"created_at", "started_at", "ended_at", "duration_seconds", "scheduled_at"}
 
 
 @router.post(
@@ -173,6 +179,8 @@ async def list_interviews(
     total = total_result.scalar()
 
     # Sort
+    if sort_by not in ALLOWED_SORT_FIELDS:
+        sort_by = "created_at"
     sort_column = getattr(Interview, sort_by, Interview.created_at)
     if sort_order == "asc":
         base_query = base_query.order_by(sort_column.asc())
@@ -240,8 +248,8 @@ async def reschedule_interview(
             entity_id=str(interview.id),
             details={"new_scheduled_at": str(data.scheduled_at)},
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("audit_log_failed", action="reschedule_interview", error=str(e))
 
     return InterviewResponse(
         id=str(interview.id),
@@ -287,8 +295,8 @@ async def cancel_interview(
             entity_id=str(interview.id),
             details={},
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("audit_log_failed", action="cancel_interview", error=str(e))
 
     interview.status = "cancelled"
     await db.flush()

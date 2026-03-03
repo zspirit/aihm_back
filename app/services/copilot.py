@@ -42,7 +42,7 @@ Tu aides les recruteurs à explorer et analyser les données de recrutement : ca
 - Limite les résultats à 50 éléments max pour éviter la surcharge
 
 ## Outils disponibles
-Tu as 7 outils pour interroger la base de données :
+Tu as 8 outils pour interroger la base de données :
 1. `search_candidates` : rechercher/filtrer des candidats
 2. `list_positions` : lister les postes
 3. `get_position_details` : détails d'un poste spécifique
@@ -50,8 +50,13 @@ Tu as 7 outils pour interroger la base de données :
 5. `get_analytics_overview` : vue d'ensemble des KPIs
 6. `aggregate_scores` : statistiques sur les scores
 7. `get_pipeline_breakdown` : répartition des candidats par statut
+8. `export_data` : exporter des données en fichier Excel (.xlsx) téléchargeable
 
-Utilise ces outils pour répondre aux questions de façon précise et basée sur les données réelles."""
+Utilise ces outils pour répondre aux questions de façon précise et basée sur les données réelles.
+
+## Export de données
+Quand l'utilisateur demande un export, un téléchargement, un fichier Excel/CSV/XLS, utilise l'outil `export_data`.
+Inclus TOUJOURS le lien de téléchargement dans ta réponse sous la forme : [Télécharger le fichier](URL)"""
 
 
 # Définitions des outils Claude tool_use
@@ -172,6 +177,42 @@ COPILOT_TOOLS = [
                     "description": "UUID du poste pour filtrer (optionnel)"
                 }
             }
+        }
+    },
+    {
+        "name": "export_data",
+        "description": "Exporte des données en fichier Excel (.xlsx) téléchargeable. Utilise cet outil quand l'utilisateur demande un export, un téléchargement, un fichier Excel/CSV/XLS.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "data_type": {
+                    "type": "string",
+                    "description": "Type de données à exporter",
+                    "enum": ["candidates", "interviews", "positions"]
+                },
+                "position_id": {
+                    "type": "string",
+                    "description": "UUID du poste pour filtrer (optionnel)"
+                },
+                "status": {
+                    "type": "string",
+                    "description": "Statut pour filtrer : pour candidates = pipeline_status (evaluated, cv_analyzed, etc.), pour positions = active/draft/closed, pour interviews = completed/scheduled/etc. (optionnel)"
+                },
+                "min_score": {
+                    "type": "number",
+                    "description": "Score CV minimum pour filtrer les candidats (optionnel)"
+                },
+                "columns": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Colonnes spécifiques à inclure (optionnel, toutes par défaut)"
+                },
+                "filename": {
+                    "type": "string",
+                    "description": "Nom du fichier sans extension (optionnel, auto-généré sinon)"
+                }
+            },
+            "required": ["data_type"]
         }
     }
 ]
@@ -636,6 +677,200 @@ async def handle_get_pipeline_breakdown(
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
+async def handle_export_data(
+    db: AsyncSession,
+    tenant_id: UUID,
+    params: Dict[str, Any]
+) -> str:
+    """Export data to an Excel file and return download URL."""
+    import os
+    import tempfile
+    import uuid as uuid_mod
+    from datetime import datetime, timezone
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+    data_type = params.get("data_type", "candidates")
+    position_id = params.get("position_id")
+    status_filter = params.get("status")
+    min_score = params.get("min_score")
+    custom_filename = params.get("filename")
+
+    position_uuid = None
+    if position_id:
+        try:
+            position_uuid = UUID(position_id)
+        except (ValueError, AttributeError):
+            pass
+
+    rows_data = []
+    headers = []
+    sheet_title = "Export"
+
+    if data_type == "candidates":
+        sheet_title = "Candidats"
+        query = (
+            select(Candidate, Position.title)
+            .join(Position, Candidate.position_id == Position.id)
+            .where(Candidate.tenant_id == tenant_id)
+        )
+        if position_uuid:
+            query = query.where(Candidate.position_id == position_uuid)
+        if status_filter:
+            query = query.where(Candidate.pipeline_status == status_filter)
+        if min_score is not None:
+            query = query.where(Candidate.cv_score >= min_score)
+        query = query.order_by(desc(Candidate.created_at)).limit(500)
+
+        result = await db.execute(query)
+        rows = result.all()
+
+        headers = ["Nom", "Email", "Telephone", "Poste", "Score CV", "Statut", "Date"]
+        for row in rows:
+            c, pos_title = row
+            rows_data.append([
+                c.name,
+                c.email or "",
+                c.phone or "",
+                pos_title,
+                round(c.cv_score, 1) if c.cv_score is not None else "",
+                c.pipeline_status,
+                c.created_at.strftime("%d/%m/%Y") if c.created_at else "",
+            ])
+
+    elif data_type == "interviews":
+        sheet_title = "Entretiens"
+        query = (
+            select(Interview, Candidate.name, Position.title)
+            .join(Candidate, Interview.candidate_id == Candidate.id)
+            .join(Position, Interview.position_id == Position.id)
+            .where(Interview.tenant_id == tenant_id)
+        )
+        if position_uuid:
+            query = query.where(Interview.position_id == position_uuid)
+        if status_filter:
+            query = query.where(Interview.status == status_filter)
+        query = query.order_by(desc(Interview.created_at)).limit(500)
+
+        result = await db.execute(query)
+        rows = result.all()
+
+        headers = ["Candidat", "Poste", "Statut", "Date planifiee", "Duree (s)", "Tentative"]
+        for row in rows:
+            itw, cand_name, pos_title = row
+            rows_data.append([
+                cand_name,
+                pos_title,
+                itw.status,
+                itw.scheduled_at.strftime("%d/%m/%Y %H:%M") if itw.scheduled_at else "",
+                itw.duration_seconds or "",
+                itw.attempt_number,
+            ])
+
+    elif data_type == "positions":
+        sheet_title = "Postes"
+        query = select(Position).where(Position.tenant_id == tenant_id)
+        if status_filter:
+            query = query.where(Position.status == status_filter)
+        query = query.order_by(desc(Position.created_at)).limit(200)
+
+        result = await db.execute(query)
+        positions = result.scalars().all()
+
+        # Count candidates per position
+        count_query = (
+            select(Candidate.position_id, func.count(Candidate.id))
+            .where(Candidate.tenant_id == tenant_id)
+            .group_by(Candidate.position_id)
+        )
+        count_result = await db.execute(count_query)
+        counts = {str(r[0]): r[1] for r in count_result.all()}
+
+        headers = ["Titre", "Niveau", "Statut", "Candidats", "Date creation"]
+        for p in positions:
+            rows_data.append([
+                p.title,
+                p.seniority_level or "",
+                p.status,
+                counts.get(str(p.id), 0),
+                p.created_at.strftime("%d/%m/%Y") if p.created_at else "",
+            ])
+    else:
+        return json.dumps({"error": f"Type d'export inconnu: {data_type}"}, ensure_ascii=False)
+
+    if not rows_data:
+        return json.dumps({
+            "error": "Aucune donnee trouvee pour les filtres specifies",
+            "data_type": data_type,
+            "filters": {"position_id": position_id, "status": status_filter, "min_score": min_score}
+        }, ensure_ascii=False)
+
+    # Generate Excel file
+    wb = Workbook()
+    ws = wb.active
+    ws.title = sheet_title
+
+    # Styles
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    header_fill = PatternFill(start_color="3B82F6", end_color="3B82F6", fill_type="solid")
+    header_alignment = Alignment(horizontal="center", vertical="center")
+    thin_border = Border(
+        left=Side(style="thin", color="D1D5DB"),
+        right=Side(style="thin", color="D1D5DB"),
+        top=Side(style="thin", color="D1D5DB"),
+        bottom=Side(style="thin", color="D1D5DB"),
+    )
+
+    # Write headers
+    for col_idx, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_idx, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_alignment
+        cell.border = thin_border
+
+    # Write data
+    for row_idx, row_data in enumerate(rows_data, 2):
+        for col_idx, value in enumerate(row_data, 1):
+            cell = ws.cell(row=row_idx, column=col_idx, value=value)
+            cell.border = thin_border
+            cell.alignment = Alignment(vertical="center")
+
+    # Auto-width columns
+    for col_idx, header in enumerate(headers, 1):
+        max_len = len(str(header))
+        for row_data in rows_data:
+            val = str(row_data[col_idx - 1]) if col_idx - 1 < len(row_data) else ""
+            max_len = max(max_len, len(val))
+        ws.column_dimensions[ws.cell(row=1, column=col_idx).column_letter].width = min(max_len + 4, 50)
+
+    # Save to exports directory
+    exports_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "exports")
+    os.makedirs(exports_dir, exist_ok=True)
+
+    file_id = uuid_mod.uuid4().hex[:12]
+    if custom_filename:
+        safe_name = "".join(c for c in custom_filename if c.isalnum() or c in "-_ ").strip()
+        filename = f"{safe_name}_{file_id}.xlsx"
+    else:
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+        filename = f"{data_type}_{timestamp}_{file_id}.xlsx"
+
+    filepath = os.path.join(exports_dir, filename)
+    wb.save(filepath)
+
+    download_url = f"/api/v1/copilot/exports/{filename}"
+
+    return json.dumps({
+        "success": True,
+        "filename": filename,
+        "download_url": download_url,
+        "row_count": len(rows_data),
+        "columns": headers,
+        "data_type": data_type,
+    }, ensure_ascii=False)
+
+
 # ============================================================================
 # DISPATCHER
 # ============================================================================
@@ -681,6 +916,9 @@ async def execute_tool(
 
         elif tool_name == "get_pipeline_breakdown":
             return await handle_get_pipeline_breakdown(db, tenant_id, tool_input)
+
+        elif tool_name == "export_data":
+            return await handle_export_data(db, tenant_id, tool_input)
 
         else:
             return json.dumps({

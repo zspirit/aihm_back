@@ -37,7 +37,14 @@ def analyze_interview(self, interview_id: str):
             return
 
         candidate = session.get(Candidate, interview.candidate_id)
+        if not candidate:
+            logger.error("candidate_not_found", candidate_id=str(interview.candidate_id))
+            return
+
         position = session.get(Position, interview.position_id)
+        if not position:
+            logger.error("position_not_found", position_id=str(interview.position_id))
+            return
 
         analysis_result = run_analysis(transcription, position, candidate)
 
@@ -134,6 +141,7 @@ def run_analysis(transcription, position, candidate) -> dict:
     response = client.messages.create(
         model=settings.ANTHROPIC_MODEL,
         max_tokens=4000,
+        timeout=60.0,
         messages=[
             {
                 "role": "user",

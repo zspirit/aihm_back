@@ -24,6 +24,9 @@ def generate_questions(self, candidate_id: str):
             return
 
         position = session.get(Position, candidate.position_id)
+        if not position:
+            logger.error("position_not_found", position_id=str(candidate.position_id))
+            return
 
         questions = generate_interview_questions(candidate, position)
 
@@ -105,6 +108,7 @@ def generate_interview_questions(candidate, position) -> list[dict]:
     response = client.messages.create(
         model=settings.ANTHROPIC_MODEL,
         max_tokens=1500,
+        timeout=60.0,
         messages=[
             {
                 "role": "user",

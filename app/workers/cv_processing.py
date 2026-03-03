@@ -35,6 +35,9 @@ def process_cv(self, candidate_id: str):
             return
 
         position = session.get(Position, candidate.position_id)
+        if not position:
+            logger.warning("position_not_found", position_id=str(candidate.position_id))
+            # Continue without position-specific scoring
 
         # Parse CV
         parsed_data = parse_cv_file(candidate.cv_file_path)
@@ -133,6 +136,7 @@ def extract_structured_data(text: str) -> dict:
     response = client.messages.create(
         model=settings.ANTHROPIC_MODEL,
         max_tokens=1500,
+        timeout=60.0,
         messages=[
             {
                 "role": "user",
@@ -184,6 +188,7 @@ def score_cv(parsed_data: dict, position) -> dict:
     response = client.messages.create(
         model=settings.ANTHROPIC_MODEL,
         max_tokens=1000,
+        timeout=60.0,
         messages=[
             {
                 "role": "user",
@@ -192,7 +197,7 @@ def score_cv(parsed_data: dict, position) -> dict:
 FICHE DE POSTE:
 - Titre: {position.title}
 - Description: {position.description[:1000]}
-- Competences requises: {json.dumps(position.required_skills)}
+- Competences requises: {json.dumps(position.required_skills, ensure_ascii=False)}
 - Niveau: {position.seniority_level}
 
 CV PARSE:
@@ -205,22 +210,25 @@ PONDERATION DES CRITERES:
 Le score global = (skills_match * 0.5) + (experience_match * 0.3) + (education_match * 0.2)
 
 GUIDE D'INTERPRETATION DES SCORES:
-- Score 80+ : excellent match, le candidat possede la grande majorite des competences requises et une experience tres pertinente
-- Score 60+ : bon match, le candidat possede la plupart des competences requises, quelques lacunes mineures
-- Score 40-59 : match partiel, lacunes significatives mais potentiel de progression
+- Score 80+ : excellent match, competences demontrees en projet sur la majorite des requis
+- Score 60-79 : bon match, competences presentes avec quelques lacunes
+- Score 40-59 : match partiel, lacunes significatives sur des competences cles
 - Score <40 : faible correspondance avec le poste
 
-INSTRUCTIONS D'EVALUATION:
-- Valorise les competences transferables : une competence acquise dans un autre domaine reste une competence valide
-- Ne penalise pas excessivement l'experience dans un secteur different si les competences techniques sont presentes
-- Prends en compte les certifications et formations continues comme indicateurs de competences
-- Evalue l'experience par rapport au niveau demande (junior/senior) — ne surpenalise pas un profil junior pour manque d'annees
+METHODE D'EVALUATION DES COMPETENCES (CRITIQUE):
+1. Une competence est "matched" UNIQUEMENT si elle est DEMONTREE dans un projet ou une experience concrete (pas juste listee dans les skills)
+2. Une competence simplement listee avec "knowledge", "basics", "notions" ou sans projet associe = NON VALIDEE comme matched
+3. Distinguer clairement : utiliser une techno en tant que consommateur (ex: appeler une API) vs la maitriser (ex: concevoir et developper des APIs)
+4. Pour un poste Full Stack : verifier que le candidat a une experience REELLE sur les DEUX parties (frontend ET backend). Un profil 90% frontend avec des mots-cles backend ne doit PAS etre score comme full stack
+5. Le keyword stuffing (lister beaucoup de technos sans experience concrete) doit REDUIRE la confiance dans les competences declarees, pas l'augmenter
+6. Competences transferables : accepter les equivalences technologiques SEULEMENT si demontrees en projet (ex: PHP/Laravel backend = transferable vers Python backend, mais "Node.js knowledge" sans projet ≠ competence backend)
 
 REGLES STRICTES:
-- Score de 0 a 100, base sur des criteres observables uniquement
+- Score de 0 a 100, base sur des competences DEMONTREES en projet uniquement
 - PAS d'inference de personnalite ou de motivation
 - PAS de recommandation d'embauche
-- Justifie chaque sous-score par des elements factuels du CV
+- Justifie chaque sous-score par des elements factuels du CV (nommer les projets concrets)
+- Sois sceptique envers les longues listes de skills sans projets correspondants
 
 Format JSON:
 {{

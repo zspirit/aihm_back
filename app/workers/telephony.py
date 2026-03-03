@@ -27,7 +27,14 @@ def initiate_call(self, interview_id: str):
             return
 
         candidate = session.get(Candidate, interview.candidate_id)
+        if not candidate:
+            logger.error("candidate_not_found", candidate_id=str(interview.candidate_id))
+            return
+
         position = session.get(Position, interview.position_id)
+        if not position:
+            logger.error("position_not_found", position_id=str(interview.position_id))
+            return
 
         # Generate questions for this interview
         from app.workers.question_generation import generate_interview_questions

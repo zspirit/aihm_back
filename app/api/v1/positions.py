@@ -20,9 +20,13 @@ from app.schemas.position import (
     PositionUpdate,
     normalize_skills,
 )
+import structlog
+
 from app.services.audit import log_action
 from app.services.position_import import extract_position_from_text
 from app.services.position_templates import POSITION_TEMPLATES
+
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/positions", tags=["positions"])
 limiter = Limiter(key_func=get_remote_address)
@@ -124,8 +128,8 @@ async def create_position(
             entity_id=str(position.id),
             details={"title": data.title},
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("audit_log_failed", action="create_position", error=str(e))
 
     return _build_position_response(position, candidate_count=0)
 
@@ -247,8 +251,8 @@ async def update_position(
             entity_id=str(position.id),
             details={"updated_fields": list(update_data.keys())},
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("audit_log_failed", action="update_position", error=str(e))
 
     count_result = await db.execute(
         select(func.count()).where(Candidate.position_id == position.id)
@@ -284,8 +288,8 @@ async def delete_position(
             entity_id=str(position.id),
             details={"title": position.title},
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("audit_log_failed", action="delete_position", error=str(e))
 
     await db.delete(position)
 
@@ -378,6 +382,7 @@ REGLES:
     response = client.messages.create(
         model=settings.ANTHROPIC_MODEL,
         max_tokens=2000,
+        timeout=60.0,
         messages=[{"role": "user", "content": prompt}],
     )
 

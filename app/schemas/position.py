@@ -7,7 +7,7 @@ class SkillRequirement(BaseModel):
     name: str
     level_required: int = Field(3, ge=1, le=5, description="1=basic, 5=expert")
     weight: int = Field(2, ge=1, le=3, description="1=nice-to-have, 2=important, 3=critical")
-    category: str = Field("technique", pattern=r"^(technique|experience|soft_skills|langue)$")
+    category: str = Field("technique")
 
 
 def normalize_skills(skills: list) -> list[dict]:
@@ -30,8 +30,8 @@ def normalize_skills(skills: list) -> list[dict]:
 
 
 class PositionCreate(BaseModel):
-    title: str
-    description: str = ""
+    title: str = Field(..., min_length=1, max_length=255)
+    description: str = Field(default="", max_length=10000)
     required_skills: list = []
     seniority_level: str = "mid"
     custom_questions: list[str] = []

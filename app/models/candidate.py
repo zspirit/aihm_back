@@ -27,5 +27,5 @@ class Candidate(Base):
     )
 
     position = relationship("Position", back_populates="candidates")
-    consents = relationship("Consent", back_populates="candidate")
-    interviews = relationship("Interview", back_populates="candidate")
+    consents = relationship("Consent", back_populates="candidate", cascade="all, delete-orphan")
+    interviews = relationship("Interview", back_populates="candidate", cascade="all, delete-orphan")

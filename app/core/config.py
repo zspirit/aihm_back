@@ -56,7 +56,7 @@ class Settings(BaseSettings):
 
     # App
     FRONTEND_URL: str = "http://localhost:5173"
-    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:5174", "http://localhost:3000"]
     MAX_CV_SIZE_MB: int = 10
     MAX_INTERVIEW_DURATION_SECONDS: int = 600
     DEFAULT_DATA_RETENTION_DAYS: int = 180

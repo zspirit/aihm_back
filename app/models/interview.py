@@ -29,6 +29,6 @@ class Interview(Base):
     )
 
     candidate = relationship("Candidate", back_populates="interviews")
-    transcription = relationship("Transcription", back_populates="interview", uselist=False)
-    analysis = relationship("Analysis", back_populates="interview", uselist=False)
-    report = relationship("Report", back_populates="interview", uselist=False)
+    transcription = relationship("Transcription", back_populates="interview", uselist=False, cascade="all, delete-orphan")
+    analysis = relationship("Analysis", back_populates="interview", uselist=False, cascade="all, delete-orphan")
+    report = relationship("Report", back_populates="interview", uselist=False, cascade="all, delete-orphan")
