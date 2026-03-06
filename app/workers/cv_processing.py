@@ -187,7 +187,7 @@ def score_cv(parsed_data: dict, position) -> dict:
 
     response = client.messages.create(
         model=settings.ANTHROPIC_MODEL,
-        max_tokens=1000,
+        max_tokens=2000,
         timeout=60.0,
         messages=[
             {
@@ -250,5 +250,7 @@ Format JSON:
         elif "```" in text_content:
             text_content = text_content.split("```")[1].split("```")[0]
         return json.loads(text_content.strip())
-    except (json.JSONDecodeError, IndexError):
-        return {"score": 0, "explanation": {"error": "Scoring failed"}}
+    except (json.JSONDecodeError, IndexError) as e:
+        raw = response.content[0].text if response.content else "empty"
+        logger.error("cv_scoring_json_error", error=str(e), raw_response=raw[:500], stop_reason=response.stop_reason)
+        return {"score": 0, "explanation": {"error": f"Scoring failed: {e}"}}

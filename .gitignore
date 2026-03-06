@@ -12,3 +12,8 @@ venv/
 .coverage
 htmlcov/
 .ruff_cache/
+
+COPILOT_IMPLEMENTATION.md
+MIGRATION_REFERENCE.sql
+openapi_temp.json
+exports/
