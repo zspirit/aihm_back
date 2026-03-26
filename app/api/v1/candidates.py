@@ -1815,10 +1815,10 @@ async def export_profile_pdf(
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidat introuvable")
 
-    if not candidate.profile_competencies:
+    if not candidate.profile_competencies and not candidate.cv_parsed_data:
         raise HTTPException(
             status_code=400,
-            detail="Profil non calcule. Lancez d'abord POST /candidates/{id}/profile/compute.",
+            detail="CV non analyse. Relancez l'analyse du CV.",
         )
 
     # --- Palette de couleurs (coherente avec pdf_report.py) ---
@@ -1920,7 +1920,19 @@ async def export_profile_pdf(
     now_str = datetime.now(timezone.utc).strftime("%d/%m/%Y")
 
     competencies = candidate.profile_competencies or {}
+    # Fallback: use cv_parsed_data if profile not computed
+    if not competencies and candidate.cv_parsed_data:
+        parsed = candidate.cv_parsed_data
+        competencies = {
+            "technical": [{"name": s, "level": 3} if isinstance(s, str) else s for s in parsed.get("skills", [])],
+            "experience": parsed.get("experiences", []),
+            "education": parsed.get("education", []),
+            "languages": [{"name": l, "level": "?"} if isinstance(l, str) else l for l in parsed.get("languages", [])],
+        }
     score_expl = candidate.profile_score_explanation or {}
+    # Fallback: use cv_score_explanation if profile_score_explanation empty
+    if not score_expl and candidate.cv_score_explanation:
+        score_expl = candidate.cv_score_explanation if isinstance(candidate.cv_score_explanation, dict) else {}
     suggestions_data = candidate.profile_suggestions or {}
     suggestions = suggestions_data.get("suggestions", [])
     cv_quality_score = suggestions_data.get("cv_quality_score")
@@ -1956,10 +1968,12 @@ async def export_profile_pdf(
     story.append(Spacer(1, 3 * mm))
 
     # Score global + breakdown
-    if candidate.profile_score is not None:
+    effective_score = candidate.profile_score if candidate.profile_score is not None else candidate.cv_score
+    if effective_score is not None:
         story.append(_divider())
-        story.append(Paragraph("Score profil intrinseque", ss["SectionTitle"]))
-        story.append(_make_score_bar("Score global", candidate.profile_score))
+        score_label = "Score profil intrinseque" if candidate.profile_score is not None else "Score CV"
+        story.append(Paragraph(score_label, ss["SectionTitle"]))
+        story.append(_make_score_bar("Score global", effective_score))
 
         for dim_key, dim_label in [
             ("technical_depth", "Profondeur technique"),
