@@ -223,6 +223,73 @@ async def get_match_session(
     )
 
 
+@router.delete("/sessions/{session_id}", status_code=204)
+async def delete_match_session(
+    session_id: UUID,
+    current_user: User = Depends(require_role("admin", "recruiter")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a matching session and its scores."""
+    from sqlalchemy import delete as sql_delete
+    result = await db.execute(
+        select(MatchSession).where(
+            MatchSession.id == session_id,
+            MatchSession.tenant_id == current_user.tenant_id,
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session introuvable")
+    # Delete associated match scores for the session's positions+candidates
+    if session.position_ids and session.candidate_ids:
+        pos_uuids = [UUID(p) if isinstance(p, str) else p for p in session.position_ids]
+        cand_uuids = [UUID(c) if isinstance(c, str) else c for c in session.candidate_ids]
+        await db.execute(
+            sql_delete(MatchScore).where(
+                MatchScore.tenant_id == current_user.tenant_id,
+                MatchScore.position_id.in_(pos_uuids),
+                MatchScore.candidate_id.in_(cand_uuids),
+            )
+        )
+    await db.delete(session)
+    await db.commit()
+
+
+@router.post("/sessions/bulk-delete", status_code=200)
+async def bulk_delete_match_sessions(
+    body: dict,
+    current_user: User = Depends(require_role("admin", "recruiter")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete multiple matching sessions."""
+    from sqlalchemy import delete as sql_delete
+    ids = body.get("ids", [])
+    if not ids:
+        raise HTTPException(status_code=400, detail="Aucun ID fourni")
+    uuids = [UUID(i) for i in ids]
+    result = await db.execute(
+        select(MatchSession).where(
+            MatchSession.id.in_(uuids),
+            MatchSession.tenant_id == current_user.tenant_id,
+        )
+    )
+    sessions = result.scalars().all()
+    for session in sessions:
+        if session.position_ids and session.candidate_ids:
+            pos_uuids = [UUID(p) if isinstance(p, str) else p for p in session.position_ids]
+            cand_uuids = [UUID(c) if isinstance(c, str) else c for c in session.candidate_ids]
+            await db.execute(
+                sql_delete(MatchScore).where(
+                    MatchScore.tenant_id == current_user.tenant_id,
+                    MatchScore.position_id.in_(pos_uuids),
+                    MatchScore.candidate_id.in_(cand_uuids),
+                )
+            )
+        await db.delete(session)
+    await db.commit()
+    return {"deleted": len(sessions)}
+
+
 @router.get("/sessions/{session_id}/events")
 async def match_session_events(
     session_id: UUID,
