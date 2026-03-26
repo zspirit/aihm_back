@@ -7,7 +7,7 @@ from app.core.dependencies import get_current_user, require_role
 from app.models.audit_log import AuditLog
 from app.models.tenant import Tenant
 from app.models.user import User
-from app.schemas.tenant import ComplianceInfo, TenantSettings, TenantSettingsUpdate
+from app.schemas.tenant import COMPLIANCE_FRAMEWORKS, ComplianceInfo, TenantSettings, TenantSettingsUpdate
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -23,6 +23,11 @@ def _tenant_to_response(tenant: Tenant) -> TenantSettings:
         timezone=tenant.timezone,
         data_retention_days=tenant.data_retention_days,
         max_interview_duration=tenant.max_interview_duration,
+        scoring_skills_weight=tenant.scoring_skills_weight,
+        scoring_experience_weight=tenant.scoring_experience_weight,
+        scoring_education_weight=tenant.scoring_education_weight,
+        compliance_framework=tenant.compliance_framework,
+        compliance_config=tenant.compliance_config,
     )
 
 
@@ -75,7 +80,15 @@ async def get_compliance(
     )
     total_audit_entries = count_result.scalar() or 0
 
+    framework_key = tenant.compliance_framework or "CNDP"
+    framework = COMPLIANCE_FRAMEWORKS.get(framework_key, COMPLIANCE_FRAMEWORKS["CNDP"])
+
     return ComplianceInfo(
+        legal_framework=framework["legal_framework"],
+        regulatory_body=framework["regulatory_body"],
+        telecom_authority=framework["telecom_authority"],
+        country=framework["country"],
+        compliance_framework=framework_key,
         data_retention_days=tenant.data_retention_days,
         last_audit_action=last_audit_action,
         total_audit_entries=total_audit_entries,

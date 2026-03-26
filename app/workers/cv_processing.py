@@ -46,11 +46,20 @@ def process_cv(self, candidate_id: str, position_id: str | None = None, bulk_imp
         parsed_data = parse_cv_file(candidate.cv_file_path)
         candidate.cv_parsed_data = {**(candidate.cv_parsed_data or {}), **parsed_data}
 
+        # Load tenant scoring weights
+        from app.models.tenant import Tenant
+        tenant = session.get(Tenant, candidate.tenant_id)
+        scoring_weights = {
+            "skills": tenant.scoring_skills_weight if tenant else 50,
+            "experience": tenant.scoring_experience_weight if tenant else 30,
+            "education": tenant.scoring_education_weight if tenant else 20,
+        }
+
         # Score CV
         auto_advanced = False
         if position:
             # Score against specific position
-            score_result = score_cv(parsed_data, position)
+            score_result = score_cv(parsed_data, position, weights=scoring_weights)
             candidate.cv_score = score_result["score"]
             candidate.cv_score_explanation = score_result["explanation"]
             cv_score = score_result["score"]
@@ -236,13 +245,17 @@ Format JSON attendu:
         return {"raw_text": text[:2000], "parse_error": True}
 
 
-def score_cv(parsed_data: dict, position) -> dict:
+def score_cv(parsed_data: dict, position, weights: dict | None = None) -> dict:
     from anthropic import Anthropic
 
     from app.core.config import get_settings
 
     settings = get_settings()
     client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+
+    sw = (weights or {}).get("skills", 50)
+    ew = (weights or {}).get("experience", 30)
+    edw = (weights or {}).get("education", 20)
 
     response = client.messages.create(
         model=settings.ANTHROPIC_MODEL,
@@ -263,9 +276,9 @@ CV PARSE:
 {json.dumps(parsed_data, ensure_ascii=False)[:2000]}
 
 PONDERATION DES CRITERES:
-- skills_match : 50% du score global (competences techniques et fonctionnelles)
-- experience_match : 30% du score global (annees + pertinence du parcours)
-- education_match : 20% du score global (diplomes, certifications)
+- skills_match : {sw}% du score global (competences techniques et fonctionnelles)
+- experience_match : {ew}% du score global (annees + pertinence du parcours)
+- education_match : {edw}% du score global (diplomes, certifications)
 Le score global = (skills_match * 0.5) + (experience_match * 0.3) + (education_match * 0.2)
 
 GUIDE D'INTERPRETATION DES SCORES:

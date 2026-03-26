@@ -1,8 +1,8 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Integer, String
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import DateTime, Float, Integer, String
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -20,6 +20,16 @@ class Tenant(Base):
     timezone: Mapped[str] = mapped_column(String(50), default="Africa/Casablanca")
     data_retention_days: Mapped[int] = mapped_column(Integer, default=180)
     max_interview_duration: Mapped[int] = mapped_column(Integer, default=600)
+
+    # Scoring weights (0-100, must sum to 100)
+    scoring_skills_weight: Mapped[int] = mapped_column(Integer, default=50)
+    scoring_experience_weight: Mapped[int] = mapped_column(Integer, default=30)
+    scoring_education_weight: Mapped[int] = mapped_column(Integer, default=20)
+
+    # Compliance framework
+    compliance_framework: Mapped[str] = mapped_column(String(50), default="CNDP")
+    compliance_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
