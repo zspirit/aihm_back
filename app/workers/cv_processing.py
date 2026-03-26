@@ -19,10 +19,11 @@ def get_sync_session():
 
 
 @shared_task(name="cv.process", bind=True, max_retries=3)
-def process_cv(self, candidate_id: str, position_id: str | None = None):
-    logger.info("cv_processing_start", candidate_id=candidate_id, position_id=position_id)
+def process_cv(self, candidate_id: str, position_id: str | None = None, bulk_import_id: str | None = None):
+    logger.info("cv_processing_start", candidate_id=candidate_id, position_id=position_id, bulk_import_id=bulk_import_id)
 
     session = get_sync_session()
+    success = False
     try:
         from uuid import UUID
 
@@ -32,6 +33,7 @@ def process_cv(self, candidate_id: str, position_id: str | None = None):
         candidate = session.get(Candidate, UUID(candidate_id))
         if not candidate or not candidate.cv_file_path:
             logger.warning("cv_processing_skip", candidate_id=candidate_id, reason="no_cv")
+            success = True  # Not an error, just nothing to do
             return
 
         # Use explicit position_id if provided, else fall back to candidate.position_id
@@ -44,9 +46,10 @@ def process_cv(self, candidate_id: str, position_id: str | None = None):
         parsed_data = parse_cv_file(candidate.cv_file_path)
         candidate.cv_parsed_data = {**(candidate.cv_parsed_data or {}), **parsed_data}
 
-        # Score CV against position (skip scoring if no position = vivier)
+        # Score CV
         auto_advanced = False
         if position:
+            # Score against specific position
             score_result = score_cv(parsed_data, position)
             candidate.cv_score = score_result["score"]
             candidate.cv_score_explanation = score_result["explanation"]
@@ -63,14 +66,19 @@ def process_cv(self, candidate_id: str, position_id: str | None = None):
             else:
                 candidate.pipeline_status = "cv_analyzed"
         else:
+            # Vivier: score CV quality (no position comparison)
+            quality_result = score_cv_quality(parsed_data)
+            candidate.cv_score = quality_result["score"]
+            candidate.cv_score_explanation = quality_result["explanation"]
             candidate.pipeline_status = "cv_analyzed"
-            logger.info("cv_parsed_no_position", candidate_id=candidate_id)
+            logger.info("cv_quality_scored", candidate_id=candidate_id, score=quality_result["score"])
 
         session.commit()
+        success = True
         logger.info(
             "cv_processing_done",
             candidate_id=candidate_id,
-            score=score_result["score"],
+            score=candidate.cv_score,
         )
 
         # Trigger question generation + consent email (only if position exists)
@@ -96,7 +104,48 @@ def process_cv(self, candidate_id: str, position_id: str | None = None):
         except Exception:
             pass  # If not in Celery context (inline), just log
     finally:
+        # Update BulkImport progress atomically (if part of a bulk import)
+        if bulk_import_id:
+            _update_bulk_import_progress(session, bulk_import_id, success)
         session.close()
+
+
+def _update_bulk_import_progress(session, bulk_import_id: str, success: bool):
+    """Atomically update BulkImport counters after one CV is processed."""
+    from datetime import datetime, timezone
+    from uuid import UUID
+
+    from sqlalchemy import text as sql_text
+
+    try:
+        bid = UUID(bulk_import_id)
+        if success:
+            session.execute(sql_text(
+                "UPDATE bulk_imports SET processed_count = processed_count + 1, "
+                "success_count = success_count + 1 WHERE id = :bid"
+            ), {"bid": str(bid)})
+        else:
+            session.execute(sql_text(
+                "UPDATE bulk_imports SET processed_count = processed_count + 1, "
+                "error_count = error_count + 1 WHERE id = :bid"
+            ), {"bid": str(bid)})
+        session.commit()
+
+        # Check if all done — mark completed
+        from app.models.bulk_import import BulkImport
+        bi = session.get(BulkImport, bid)
+        if bi and bi.processed_count >= bi.total_count:
+            bi.status = "completed"
+            bi.completed_at = datetime.now(timezone.utc)
+            session.commit()
+            logger.info("bulk_import_completed", import_id=bulk_import_id,
+                        total=bi.total_count, success=bi.success_count, errors=bi.error_count)
+    except Exception as exc:
+        logger.warning("bulk_import_progress_error", import_id=bulk_import_id, error=str(exc))
+        try:
+            session.rollback()
+        except Exception:
+            pass
 
 
 def parse_cv_file(file_path: str) -> dict:
@@ -264,3 +313,70 @@ Format JSON:
         raw = response.content[0].text if response.content else "empty"
         logger.error("cv_scoring_json_error", error=str(e), raw_response=raw[:500], stop_reason=response.stop_reason)
         return {"score": 0, "explanation": {"error": f"Scoring failed: {e}"}}
+
+
+def score_cv_quality(parsed_data: dict) -> dict:
+    """Score intrinsic CV quality (without comparing to a specific position)."""
+    from anthropic import Anthropic
+
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+
+    response = client.messages.create(
+        model=settings.ANTHROPIC_MODEL,
+        max_tokens=1500,
+        timeout=60.0,
+        messages=[
+            {
+                "role": "user",
+                "content": f"""Evalue la qualite intrinseque de ce CV (sans comparaison a un poste specifique).
+Reponds UNIQUEMENT en JSON valide.
+
+CV PARSE:
+{json.dumps(parsed_data, ensure_ascii=False)[:3000]}
+
+CRITERES D'EVALUATION (score de 0 a 100):
+- technical_depth (30%) : profondeur technique — competences demontrees en projet concret, pas juste listees
+- experience_quality (30%) : qualite du parcours — progression, entreprises, impact mesurable, duree
+- education_relevance (20%) : formation — diplomes, certifications, pertinence
+- cv_completeness (20%) : completude du CV — informations de contact, structure claire, description des experiences
+
+GUIDE:
+- 80+ : profil senior/expert, parcours solide avec preuves concretes
+- 60-79 : bon profil, experiences pertinentes avec quelques lacunes
+- 40-59 : profil junior ou CV incomplet
+- <40 : CV tres lacunaire ou peu exploitable
+
+REGLES:
+- Score base sur des elements FACTUELS du CV uniquement
+- PAS d'inference de personnalite ou motivation
+- Penaliser le keyword stuffing (longues listes sans preuves)
+- Valoriser les realisations concretes et mesurables
+
+Format JSON:
+{{
+    "score": 65,
+    "explanation": {{
+        "technical_depth": {{"score": 70, "justification": "..."}},
+        "experience_quality": {{"score": 60, "justification": "..."}},
+        "education_relevance": {{"score": 65, "justification": "..."}},
+        "cv_completeness": {{"score": 70, "justification": "..."}}
+    }}
+}}""",
+            }
+        ],
+    )
+
+    try:
+        text_content = response.content[0].text
+        if "```json" in text_content:
+            text_content = text_content.split("```json")[1].split("```")[0]
+        elif "```" in text_content:
+            text_content = text_content.split("```")[1].split("```")[0]
+        return json.loads(text_content.strip())
+    except (json.JSONDecodeError, IndexError) as e:
+        raw = response.content[0].text if response.content else "empty"
+        logger.error("cv_quality_json_error", error=str(e), raw_response=raw[:500])
+        return {"score": 0, "explanation": {"error": f"Quality scoring failed: {e}"}}

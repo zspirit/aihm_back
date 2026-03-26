@@ -1041,8 +1041,72 @@ async def delete_candidate(
         await db.execute(delete(Interview).where(Interview.candidate_id == candidate_id))
 
     await db.execute(delete(Consent).where(Consent.candidate_id == candidate_id))
+    await db.execute(delete(MatchScore).where(MatchScore.candidate_id == candidate_id))
+
+    from app.models.application import Application
+    await db.execute(delete(Application).where(Application.candidate_id == candidate_id))
+
     await db.execute(delete(Candidate).where(Candidate.id == candidate_id))
     await db.commit()
+
+
+@router.post("/candidates/bulk-delete", status_code=status.HTTP_200_OK)
+async def bulk_delete_candidates(
+    body: dict,
+    current_user: User = Depends(require_role("admin", "recruiter")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete multiple candidates by IDs."""
+    candidate_ids = body.get("ids", [])
+    if not candidate_ids:
+        raise HTTPException(status_code=400, detail="Aucun ID fourni")
+    if len(candidate_ids) > 100:
+        raise HTTPException(status_code=400, detail="Maximum 100 candidats par suppression")
+
+    uuids = [UUID(cid) for cid in candidate_ids]
+
+    # Verify all belong to tenant
+    result = await db.execute(
+        select(Candidate).where(
+            Candidate.id.in_(uuids),
+            Candidate.tenant_id == current_user.tenant_id,
+        )
+    )
+    candidates = result.scalars().all()
+    found_ids = [c.id for c in candidates]
+
+    if not found_ids:
+        raise HTTPException(status_code=404, detail="Aucun candidat trouve")
+
+    # Get related interview IDs
+    int_result = await db.execute(
+        select(Interview.id).where(Interview.candidate_id.in_(found_ids))
+    )
+    interview_ids = [row[0] for row in int_result.all()]
+
+    if interview_ids:
+        await db.execute(delete(Report).where(Report.interview_id.in_(interview_ids)))
+        await db.execute(delete(Transcription).where(Transcription.interview_id.in_(interview_ids)))
+        await db.execute(delete(Analysis).where(Analysis.interview_id.in_(interview_ids)))
+        await db.execute(delete(Interview).where(Interview.candidate_id.in_(found_ids)))
+
+    await db.execute(delete(Consent).where(Consent.candidate_id.in_(found_ids)))
+    await db.execute(delete(MatchScore).where(MatchScore.candidate_id.in_(found_ids)))
+
+    from app.models.application import Application
+    await db.execute(delete(Application).where(Application.candidate_id.in_(found_ids)))
+
+    await db.execute(delete(Candidate).where(Candidate.id.in_(found_ids)))
+
+    for c in candidates:
+        await log_action(
+            db, tenant_id=current_user.tenant_id, user_id=current_user.id,
+            action="delete_candidate", entity_type="candidate",
+            entity_id=str(c.id), details={"name": c.name},
+        )
+
+    await db.commit()
+    return {"deleted": len(found_ids)}
 
 
 @router.put("/candidates/{candidate_id}", response_model=CandidateResponse)

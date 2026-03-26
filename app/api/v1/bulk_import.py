@@ -11,7 +11,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 from openpyxl import load_workbook
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -167,7 +167,7 @@ async def import_events(
                 if bulk_import.status in ("completed", "failed"):
                     yield f"event: done\ndata: {json.dumps({'status': bulk_import.status})}\n\n"
                     break
-            await asyncio.sleep(2)
+            await asyncio.sleep(1)
 
     return StreamingResponse(
         event_stream(),
@@ -561,7 +561,7 @@ async def import_bulk_confirm(
             errors_count += 1
 
     # Update BulkImport record
-    bulk_import.status = "pending"
+    bulk_import.status = "processing"
     bulk_import.total_count = imported_count + overwritten_count
     bulk_import.import_metadata = {
         **metadata,
@@ -574,14 +574,15 @@ async def import_bulk_confirm(
     }
     await db.commit()
 
-    # Process CVs: try Celery first, fallback to inline async parallel
+    # Process CVs in parallel: try Celery first, fallback to inline async
+    bid = str(import_id)
     if auto_score and celery_ids:
         celery_available = False
         try:
             from app.workers.cv_processing import process_cv
 
             for cid in celery_ids:
-                process_cv.delay(cid)
+                process_cv.delay(cid, bulk_import_id=bid)
             celery_available = True
         except Exception:
             pass
@@ -591,7 +592,6 @@ async def import_bulk_confirm(
             import asyncio
             from starlette.concurrency import run_in_threadpool
 
-            bid = str(import_id)
             cids = list(celery_ids)
 
             async def _process_inline():
@@ -603,33 +603,11 @@ async def import_bulk_confirm(
                         try:
                             from app.workers.cv_processing import process_cv as _pvc
 
-                            await run_in_threadpool(_pvc, cid)
+                            await run_in_threadpool(_pvc, cid, None, bid)
                         except Exception as exc:
                             _structlog.get_logger().warning("inline_cv_error", candidate_id=cid, error=str(exc))
-                        # Update progress in DB
-                        async with async_session() as sess:
-                            r = await sess.execute(
-                                select(BulkImport).where(BulkImport.id == UUID(bid))
-                            )
-                            bi = r.scalar_one_or_none()
-                            if bi:
-                                bi.processed_count = (bi.processed_count or 0) + 1
-                                bi.success_count = (bi.success_count or 0) + 1
-                                await sess.commit()
 
                 await asyncio.gather(*[_do_one(c) for c in cids])
-
-                # Mark completed
-                async with async_session() as sess:
-                    r = await sess.execute(
-                        select(BulkImport).where(BulkImport.id == UUID(bid))
-                    )
-                    bi = r.scalar_one_or_none()
-                    if bi:
-                        bi.status = "completed"
-                        from datetime import datetime, timezone
-                        bi.completed_at = datetime.now(timezone.utc)
-                        await sess.commit()
 
             asyncio.create_task(_process_inline())
 
@@ -758,9 +736,35 @@ async def list_recent_imports(
     db: AsyncSession = Depends(get_db),
 ):
     """List recent imports (last 20) for the current tenant, with metadata."""
+    # Auto-cleanup: mark stuck imports (pending/processing with 0 progress for 30+ min) as failed
+    from datetime import datetime, timedelta, timezone
+
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
+    stuck_result = await db.execute(
+        select(BulkImport).where(
+            BulkImport.tenant_id == current_user.tenant_id,
+            BulkImport.status.in_(["pending", "processing"]),
+            BulkImport.processed_count == 0,
+            BulkImport.created_at < cutoff,
+        )
+    )
+    for stuck in stuck_result.scalars().all():
+        stuck.status = "failed"
+        stuck.completed_at = datetime.now(timezone.utc)
+        stuck.error_details = {"error": "Import bloque (timeout 30min sans progression)"}
+    await db.commit()
+
+    recent_cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
     result = await db.execute(
         select(BulkImport)
-        .where(BulkImport.tenant_id == current_user.tenant_id)
+        .where(
+            BulkImport.tenant_id == current_user.tenant_id,
+            # Only return: active imports OR imports from last 30 min
+            or_(
+                BulkImport.status.in_(["pending", "processing", "preview"]),
+                BulkImport.created_at >= recent_cutoff,
+            ),
+        )
         .order_by(BulkImport.created_at.desc())
         .limit(20)
     )
@@ -826,7 +830,7 @@ async def import_events_global(
                 if bulk_import.status in ("completed", "failed"):
                     yield f"event: done\ndata: {json.dumps({'status': bulk_import.status})}\n\n"
                     break
-            await asyncio.sleep(2)
+            await asyncio.sleep(1)
 
     return StreamingResponse(
         event_stream(),
