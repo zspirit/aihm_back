@@ -3,7 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete as sql_delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -294,6 +294,30 @@ async def delete_position(
         logger.warning("audit_log_failed", action="delete_position", error=str(e))
 
     await db.delete(position)
+    await db.commit()
+
+
+@router.post("/bulk-delete", status_code=status.HTTP_200_OK)
+async def bulk_delete_positions(
+    body: dict,
+    current_user: User = Depends(require_role("admin", "recruiter")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete multiple positions by IDs."""
+    ids = body.get("ids", [])
+    if not ids:
+        raise HTTPException(status_code=400, detail="Aucun ID fourni")
+    if len(ids) > 50:
+        raise HTTPException(status_code=400, detail="Maximum 50 postes")
+    uuids = [UUID(i) for i in ids]
+    result = await db.execute(
+        select(Position).where(Position.id.in_(uuids), Position.tenant_id == current_user.tenant_id)
+    )
+    positions_list = result.scalars().all()
+    for pos in positions_list:
+        await db.delete(pos)
+    await db.commit()
+    return {"deleted": len(positions_list)}
 
 
 @router.post("/{position_id}/optimize")
