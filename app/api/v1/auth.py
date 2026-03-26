@@ -1,5 +1,6 @@
 import secrets
 from datetime import datetime, timedelta, timezone
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
@@ -217,6 +218,74 @@ async def list_users(
         )
         for u in result.scalars().all()
     ]
+
+
+@router.put("/users/{user_id}", response_model=UserResponse)
+async def update_user(
+    user_id: UUID,
+    data: dict,
+    current_user: User = Depends(require_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin: update a user's name, role, or email."""
+    result = await db.execute(
+        select(User).where(User.id == user_id, User.tenant_id == current_user.tenant_id)
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+    if "full_name" in data and data["full_name"]:
+        user.full_name = data["full_name"]
+    if "role" in data and data["role"] in ("admin", "recruiter", "viewer"):
+        user.role = data["role"]
+    if "email" in data and data["email"]:
+        user.email = data["email"]
+    await db.commit()
+    await db.refresh(user)
+    return UserResponse(
+        id=str(user.id), email=user.email, full_name=user.full_name,
+        role=user.role, tenant_id=str(user.tenant_id), email_verified=user.email_verified,
+    )
+
+
+@router.delete("/users/{user_id}", status_code=204)
+async def delete_user(
+    user_id: UUID,
+    current_user: User = Depends(require_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin: delete a user (cannot delete self)."""
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Impossible de supprimer votre propre compte")
+    result = await db.execute(
+        select(User).where(User.id == user_id, User.tenant_id == current_user.tenant_id)
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+    await db.delete(user)
+    await db.commit()
+
+
+@router.post("/users/bulk-delete", status_code=200)
+async def bulk_delete_users(
+    body: dict,
+    current_user: User = Depends(require_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin: delete multiple users (cannot include self)."""
+    ids = body.get("ids", [])
+    if not ids:
+        raise HTTPException(status_code=400, detail="Aucun ID fourni")
+    uuids = [UUID(i) for i in ids if i != str(current_user.id)]
+    result = await db.execute(
+        select(User).where(User.id.in_(uuids), User.tenant_id == current_user.tenant_id)
+    )
+    users = result.scalars().all()
+    for u in users:
+        await db.delete(u)
+    await db.commit()
+    return {"deleted": len(users)}
 
 
 @router.put("/me", response_model=UserResponse)
