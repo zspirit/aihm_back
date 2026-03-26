@@ -279,7 +279,8 @@ async def match_session_events(
 
 @router.get("/matrix", response_model=MatrixResponse)
 async def get_match_matrix(
-    position_ids: str,
+    position_ids: str = "",
+    session_id: str | None = None,
     candidate_ids: str | None = None,
     min_score: float | None = None,
     page: int = 1,
@@ -291,11 +292,27 @@ async def get_match_matrix(
     Read the N*M matching matrix from cache (match_scores table).
     No Claude call — purely DB reads.
 
-    position_ids: comma-separated UUIDs (required)
+    position_ids: comma-separated UUIDs (or use session_id to load from session)
+    session_id: UUID of a MatchSession (alternative to position_ids)
     candidate_ids: comma-separated UUIDs (optional, all if omitted)
     min_score: filter candidates below this threshold (optional)
     """
     tenant_id = current_user.tenant_id
+
+    # If session_id provided, load position_ids and candidate_ids from session
+    if session_id:
+        session_result = await db.execute(
+            select(MatchSession).where(
+                MatchSession.id == UUID(session_id),
+                MatchSession.tenant_id == tenant_id,
+            )
+        )
+        session = session_result.scalar_one_or_none()
+        if not session:
+            raise HTTPException(status_code=404, detail="Session introuvable")
+        position_ids = ",".join(str(pid) for pid in (session.position_ids or []))
+        if not candidate_ids and session.candidate_ids:
+            candidate_ids = ",".join(str(cid) for cid in session.candidate_ids)
 
     # Parse position IDs
     try:
