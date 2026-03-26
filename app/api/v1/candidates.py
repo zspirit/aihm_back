@@ -501,6 +501,61 @@ async def download_cv(
     )
 
 
+@router.get("/candidates/{candidate_id}/competence-dossier")
+async def download_competence_dossier(
+    candidate_id: UUID,
+    format: str = "pdf",
+    tenant_id: UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate and download a dossier de competences (PDF or DOCX)."""
+    if format not in ("pdf", "docx"):
+        raise HTTPException(status_code=400, detail="Format invalide (pdf ou docx)")
+
+    result = await db.execute(
+        select(Candidate).where(Candidate.id == candidate_id, Candidate.tenant_id == tenant_id)
+    )
+    candidate = result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidat introuvable")
+
+    parsed = candidate.cv_parsed_data or {}
+    if not parsed or parsed.get("parse_error"):
+        raise HTTPException(status_code=400, detail="CV non analyse. Relancez l'analyse du CV.")
+
+    # Build dossier data from parsed CV
+    data = {
+        "name": parsed.get("name") or candidate.name or "Candidat",
+        "email": parsed.get("email") or candidate.email,
+        "phone": parsed.get("phone") or candidate.phone,
+        "summary": parsed.get("summary", ""),
+        "skills": parsed.get("skills", []),
+        "experiences": parsed.get("experiences", []),
+        "education": parsed.get("education", []),
+        "languages": parsed.get("languages", []),
+        "experience_years": parsed.get("experience_years"),
+    }
+
+    safe_name = (data["name"] or "candidat").replace(" ", "_")
+
+    from app.services.competence_dossier import generate_dossier_pdf, generate_dossier_docx
+
+    if format == "docx":
+        content = generate_dossier_docx(data)
+        media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        filename = f"Dossier_competences_{safe_name}.docx"
+    else:
+        content = generate_dossier_pdf(data)
+        media = "application/pdf"
+        filename = f"Dossier_competences_{safe_name}.pdf"
+
+    return Response(
+        content=content,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/candidates/{candidate_id}", response_model=CandidateResponse)
 async def get_candidate(
     candidate_id: UUID,

@@ -156,6 +156,46 @@ async def create_match_session(
     )
 
 
+@router.get("/sessions")
+async def list_match_sessions(
+    current_user: User = Depends(require_role("admin", "recruiter")),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all matching sessions for the tenant (most recent first)."""
+    result = await db.execute(
+        select(MatchSession)
+        .where(MatchSession.tenant_id == current_user.tenant_id)
+        .order_by(MatchSession.created_at.desc())
+        .limit(50)
+    )
+    sessions = result.scalars().all()
+
+    # Resolve position titles
+    all_pos_ids = set()
+    for s in sessions:
+        for pid in (s.position_ids or []):
+            all_pos_ids.add(UUID(pid) if isinstance(pid, str) else pid)
+    pos_map = {}
+    if all_pos_ids:
+        pos_result = await db.execute(select(Position).where(Position.id.in_(all_pos_ids)))
+        pos_map = {str(p.id): p.title for p in pos_result.scalars().all()}
+
+    return [
+        {
+            "id": str(s.id),
+            "status": s.status,
+            "total_pairs": s.total_pairs,
+            "computed_pairs": s.computed_pairs,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+            "completed_at": s.completed_at.isoformat() if s.completed_at else None,
+            "position_count": len(s.position_ids or []),
+            "candidate_count": len(s.candidate_ids or []),
+            "position_titles": [pos_map.get(str(pid), "?") for pid in (s.position_ids or [])],
+        }
+        for s in sessions
+    ]
+
+
 @router.get("/sessions/{session_id}", response_model=MatchSessionStatus)
 async def get_match_session(
     session_id: UUID,
@@ -471,6 +511,184 @@ async def assign_candidates(
 
     await db.commit()
     return {"results": results}
+
+
+@router.get("/assigned-pairs")
+async def get_assigned_pairs(
+    candidate_ids: str = "",
+    position_ids: str = "",
+    current_user: User = Depends(require_role("admin", "recruiter")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return existing Application pairs for given candidate+position IDs."""
+    tenant_id = current_user.tenant_id
+    cids = [UUID(c) for c in candidate_ids.split(",") if c.strip()]
+    pids = [UUID(p) for p in position_ids.split(",") if p.strip()]
+
+    if not cids or not pids:
+        return {"pairs": []}
+
+    result = await db.execute(
+        select(Application.candidate_id, Application.position_id).where(
+            Application.tenant_id == tenant_id,
+            Application.candidate_id.in_(cids),
+            Application.position_id.in_(pids),
+        )
+    )
+    pairs = [{"candidate_id": str(r[0]), "position_id": str(r[1])} for r in result.all()]
+    return {"pairs": pairs}
+
+
+@router.post("/unassign")
+async def unassign_candidates(
+    body: dict,
+    current_user: User = Depends(require_role("admin", "recruiter")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove assignment (Application) for candidate+position pairs."""
+    tenant_id = current_user.tenant_id
+    assignments = body.get("assignments", [])
+    if not assignments:
+        raise HTTPException(status_code=400, detail="Aucune assignation fournie")
+
+    results = []
+    for assignment in assignments:
+        candidate_id_str = assignment.get("candidate_id")
+        position_id_str = assignment.get("position_id")
+        if not candidate_id_str or not position_id_str:
+            continue
+        try:
+            cid = UUID(candidate_id_str)
+            pid = UUID(position_id_str)
+        except ValueError:
+            continue
+
+        result = await db.execute(
+            select(Application).where(
+                Application.candidate_id == cid,
+                Application.position_id == pid,
+                Application.tenant_id == tenant_id,
+            )
+        )
+        app = result.scalar_one_or_none()
+        if app:
+            await db.delete(app)
+            results.append({"status": "unassigned", "candidate_id": candidate_id_str, "position_id": position_id_str})
+        else:
+            results.append({"status": "not_found", "candidate_id": candidate_id_str, "position_id": position_id_str})
+
+    await db.commit()
+    return {"results": results}
+
+
+@router.post("/bulk-action")
+async def matching_bulk_action(
+    body: dict,
+    current_user: User = Depends(require_role("admin", "recruiter")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Bulk actions from matching matrix.
+    Actions: send_consent, assign_all
+    Body: {action: str, candidate_ids: [str], position_id?: str}
+    """
+    tenant_id = current_user.tenant_id
+    action = body.get("action")
+    candidate_ids = body.get("candidate_ids", [])
+
+    if not candidate_ids:
+        raise HTTPException(status_code=400, detail="Aucun candidat selectionne")
+    if len(candidate_ids) > 50:
+        raise HTTPException(status_code=400, detail="Maximum 50 candidats")
+    if action not in ("send_consent", "assign_all"):
+        raise HTTPException(status_code=400, detail="Action non supportee")
+
+    uuids = [UUID(c) for c in candidate_ids]
+    result = await db.execute(
+        select(Candidate).where(
+            Candidate.id.in_(uuids),
+            Candidate.tenant_id == tenant_id,
+        )
+    )
+    candidates = {c.id: c for c in result.scalars().all()}
+
+    results = []
+
+    if action == "send_consent":
+        for cid_str in candidate_ids:
+            cid = UUID(cid_str)
+            candidate = candidates.get(cid)
+            if not candidate:
+                results.append({"candidate_id": cid_str, "status": "error", "reason": "Candidat introuvable"})
+                continue
+            if not candidate.email:
+                results.append({"candidate_id": cid_str, "status": "error", "reason": "Email manquant"})
+                continue
+            # Check if consent already given
+            from app.models.consent import Consent
+            consent_res = await db.execute(
+                select(Consent).where(
+                    Consent.candidate_id == cid,
+                    Consent.type == "call_recording",
+                    Consent.granted.is_(True),
+                )
+            )
+            if consent_res.scalar_one_or_none():
+                results.append({"candidate_id": cid_str, "status": "skipped", "reason": "Consentement deja donne"})
+                continue
+            # Send consent email via Celery
+            try:
+                from app.workers.notifications import send_consent_email
+                send_consent_email.delay(cid_str)
+                candidate.pipeline_status = "invited"
+                results.append({"candidate_id": cid_str, "status": "ok"})
+            except Exception:
+                results.append({"candidate_id": cid_str, "status": "error", "reason": "Envoi impossible"})
+
+    elif action == "assign_all":
+        position_id_str = body.get("position_id")
+        if not position_id_str:
+            raise HTTPException(status_code=400, detail="position_id requis pour assign_all")
+        position_uuid = UUID(position_id_str)
+        for cid_str in candidate_ids:
+            cid = UUID(cid_str)
+            candidate = candidates.get(cid)
+            if not candidate:
+                continue
+            # Check if already assigned
+            existing = await db.execute(
+                select(Application.id).where(
+                    Application.candidate_id == cid,
+                    Application.position_id == position_uuid,
+                    Application.tenant_id == tenant_id,
+                )
+            )
+            if existing.scalar_one_or_none():
+                results.append({"candidate_id": cid_str, "status": "skipped", "reason": "Deja assigne"})
+                continue
+            # Get cached score
+            score_res = await db.execute(
+                select(MatchScore).where(
+                    MatchScore.candidate_id == cid,
+                    MatchScore.position_id == position_uuid,
+                    MatchScore.tenant_id == tenant_id,
+                )
+            )
+            cached = score_res.scalar_one_or_none()
+            app = Application(
+                tenant_id=tenant_id,
+                candidate_id=cid,
+                position_id=position_uuid,
+                match_score=cached.score if cached else None,
+                match_score_explanation=cached.reasons if cached else None,
+                pipeline_status="new",
+            )
+            db.add(app)
+            results.append({"candidate_id": cid_str, "status": "ok"})
+
+    await db.commit()
+    ok_count = sum(1 for r in results if r["status"] == "ok")
+    return {"results": results, "success": ok_count, "total": len(candidate_ids)}
 
 
 @router.post(
