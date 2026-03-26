@@ -1,6 +1,6 @@
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.core.config import get_settings
 
@@ -12,6 +12,11 @@ engine = create_async_engine(
     pool_size=20,
     max_overflow=10,
 )
+
+# Sync engine for Celery workers (replace asyncpg with psycopg2)
+_sync_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+sync_engine = create_engine(_sync_url, echo=settings.DATABASE_ECHO, pool_size=5, max_overflow=5)
+sync_session_factory = sessionmaker(sync_engine, class_=Session, expire_on_commit=False)
 
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 

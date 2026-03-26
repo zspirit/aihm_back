@@ -1,4 +1,5 @@
 from app.models.analysis import Analysis
+from app.models.application import Application
 from app.models.audit_log import AuditLog
 from app.models.candidate import Candidate
 from app.models.consent import Consent
@@ -13,12 +14,14 @@ from app.models.password_reset_token import PasswordResetToken
 from app.models.email_verification_token import EmailVerificationToken
 from app.models.bulk_import import BulkImport
 from app.models.notification import Notification
+from app.models.match_score import MatchScore, MatchSession
 
 __all__ = [
     "Tenant",
     "User",
     "Position",
     "Candidate",
+    "Application",
     "Consent",
     "Interview",
     "Transcription",
@@ -30,4 +33,6 @@ __all__ = [
     "EmailVerificationToken",
     "BulkImport",
     "Notification",
+    "MatchScore",
+    "MatchSession",
 ]

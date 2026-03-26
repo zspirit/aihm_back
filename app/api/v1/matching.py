@@ -185,10 +185,28 @@ async def add_candidates_from_match(
 
     # Trigger CV processing for new candidates
     if new_candidate_ids:
-        from app.workers.cv_processing import process_cv
+        try:
+            from app.workers.cv_processing import process_cv
 
-        for candidate_id in new_candidate_ids:
-            process_cv.delay(candidate_id)
+            for candidate_id in new_candidate_ids:
+                process_cv.delay(candidate_id, str(position_id))
+        except Exception:
+            # Celery unavailable — run inline
+            import asyncio
+            from starlette.concurrency import run_in_threadpool
+
+            pid = str(position_id)
+            cids = list(new_candidate_ids)
+
+            async def _score_inline():
+                for cid in cids:
+                    try:
+                        from app.workers.cv_processing import process_cv as _pvc
+                        await run_in_threadpool(_pvc, cid, pid)
+                    except Exception:
+                        pass
+
+            asyncio.create_task(_score_inline())
 
     return {
         "status": "ok",

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -8,6 +9,13 @@ class BulkImportResponse(BaseModel):
     filename: str
     total_count: int
     status: str
+
+
+class BulkImportBulkResponse(BaseModel):
+    import_id: str
+    total_count: int
+    status: str
+    source_type: str
 
 
 class BulkImportDetail(BaseModel):
@@ -40,3 +48,45 @@ class BulkActionResponse(BaseModel):
     success: int
     failed: int
     details: list[BulkActionResult]
+
+
+# ---------------------------------------------------------------------------
+# Preview / Confirm flow
+# ---------------------------------------------------------------------------
+
+
+class FilePreview(BaseModel):
+    index: int
+    filename: str
+    candidate_name: str
+    size_bytes: int
+    status: Literal["new", "duplicate", "error"]
+    error_message: str | None = None
+    duplicate_info: dict | None = None  # {candidate_id, candidate_name, position_title, match_type}
+
+
+class ImportPreviewResponse(BaseModel):
+    import_id: str
+    total_count: int
+    new_count: int
+    duplicate_count: int
+    error_count: int
+    files: list[FilePreview]
+
+
+class FileDecision(BaseModel):
+    index: int
+    action: Literal["import", "overwrite", "skip"]
+
+
+class ImportConfirmRequest(BaseModel):
+    decisions: list[FileDecision]
+
+
+class ImportConfirmResponse(BaseModel):
+    import_id: str
+    imported: int
+    overwritten: int
+    skipped: int
+    errors: int
+    status: str

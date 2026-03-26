@@ -82,6 +82,7 @@ app.add_middleware(
 
 # Register routers
 from app.api.v1.analytics import router as analytics_router
+from app.api.v1.applications import router as applications_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.candidates import router as candidates_router
 from app.api.v1.consent import router as consent_router
@@ -92,11 +93,15 @@ from app.api.v1.webhooks import router as webhooks_router
 from app.api.v1.webhooks_config import router as webhooks_config_router
 from app.api.v1.notifications import router as notifications_router
 from app.api.v1.bulk_import import router as bulk_import_router
+from app.api.v1.bulk_import import candidates_router as bulk_candidates_router
+from app.api.v1.bulk_import import imports_router as bulk_imports_router
 from app.api.v1.matching import router as matching_router
+from app.api.v1.batch_matching import router as batch_matching_router
 from app.api.v1.reports import router as reports_router
 from app.api.v1.settings import router as settings_router
 
 app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
+app.include_router(applications_router, prefix=settings.API_V1_PREFIX)
 app.include_router(positions_router, prefix=settings.API_V1_PREFIX)
 app.include_router(candidates_router, prefix=settings.API_V1_PREFIX)
 app.include_router(interviews_router, prefix=settings.API_V1_PREFIX)
@@ -107,7 +112,10 @@ app.include_router(analytics_router, prefix=settings.API_V1_PREFIX)
 app.include_router(copilot_router, prefix=settings.API_V1_PREFIX)
 app.include_router(notifications_router, prefix=settings.API_V1_PREFIX)
 app.include_router(bulk_import_router, prefix=settings.API_V1_PREFIX)
+app.include_router(bulk_candidates_router, prefix=settings.API_V1_PREFIX)
+app.include_router(bulk_imports_router, prefix=settings.API_V1_PREFIX)
 app.include_router(matching_router, prefix=settings.API_V1_PREFIX)
+app.include_router(batch_matching_router, prefix=settings.API_V1_PREFIX)
 app.include_router(reports_router, prefix=settings.API_V1_PREFIX)
 app.include_router(settings_router, prefix=settings.API_V1_PREFIX)
 

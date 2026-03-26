@@ -9,8 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependencies import get_current_user, get_tenant_id, require_role
 from app.models.candidate import Candidate
+from app.models.match_score import MatchScore, MatchSession
 from app.models.position import Position
 from app.models.user import User
+from app.schemas.batch_matching import MatchCandidatesRequest, MatchSessionResponse
 from app.schemas.position import (
     PaginatedPositions,
     PositionCreate,
@@ -56,7 +58,7 @@ async def list_positions(
     status_filter: str | None = None,
     search: str | None = Query(None, description="Search in title and description"),
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1, le=500),
     tenant_id: UUID = Depends(get_tenant_id),
     db: AsyncSession = Depends(get_db),
 ):
@@ -413,3 +415,142 @@ REGLES:
             status_code=502,
             detail="Erreur lors de l'analyse IA de l'offre d'emploi",
         )
+
+
+@router.post(
+    "/{position_id}/match-candidates",
+    response_model=MatchSessionResponse,
+    status_code=202,
+)
+async def match_candidates_for_position(
+    position_id: UUID,
+    body: MatchCandidatesRequest,
+    current_user: User = Depends(require_role("admin", "recruiter")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Lancer un matching bidirectionnel depuis une fiche poste.
+    Si candidate_ids est null, prend tous les candidats du tenant avec CV parsé.
+    Retourne un session_id pour tracker la progression via SSE (/matching/sessions/{id}/events).
+    """
+    tenant_id = current_user.tenant_id
+
+    # Vérifier que le poste appartient au tenant
+    result = await db.execute(
+        select(Position).where(
+            Position.id == position_id,
+            Position.tenant_id == tenant_id,
+        )
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Poste introuvable")
+
+    # Résoudre les candidats
+    if body.candidate_ids is not None:
+        candidate_uuids = []
+        for cid in body.candidate_ids:
+            try:
+                candidate_uuids.append(UUID(cid))
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"candidate_id invalide: {cid}")
+
+        result = await db.execute(
+            select(Candidate.id).where(
+                Candidate.id.in_(candidate_uuids),
+                Candidate.tenant_id == tenant_id,
+                Candidate.cv_parsed_data.isnot(None),
+            )
+        )
+        candidate_uuids = [row[0] for row in result.all()]
+    else:
+        result = await db.execute(
+            select(Candidate.id).where(
+                Candidate.tenant_id == tenant_id,
+                Candidate.cv_parsed_data.isnot(None),
+            )
+        )
+        candidate_uuids = [row[0] for row in result.all()]
+
+    if not candidate_uuids:
+        raise HTTPException(
+            status_code=400,
+            detail="Aucun candidat avec CV analysé trouvé",
+        )
+
+    total_pairs = len(candidate_uuids)
+
+    # Calculer les paires manquantes si pas force_recompute
+    pairs_to_compute = total_pairs
+    if not body.force_recompute:
+        result = await db.execute(
+            select(MatchScore.candidate_id).where(
+                MatchScore.tenant_id == tenant_id,
+                MatchScore.position_id == position_id,
+                MatchScore.candidate_id.in_(candidate_uuids),
+            )
+        )
+        cached_cands = {row[0] for row in result.all()}
+        pairs_to_compute = len(set(candidate_uuids) - cached_cands)
+
+    # Créer la session de matching
+    session = MatchSession(
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        position_ids=[str(position_id)],
+        candidate_ids=[str(cid) for cid in candidate_uuids],
+        status="pending",
+        total_pairs=total_pairs,
+        computed_pairs=0,
+    )
+    db.add(session)
+    await db.flush()
+    session_id = str(session.id)
+    await db.commit()
+
+    logger.info(
+        "match_session_created_for_position",
+        session_id=session_id,
+        position_id=str(position_id),
+        candidates=len(candidate_uuids),
+        pairs_to_compute=pairs_to_compute,
+    )
+
+    # Lancer le worker Celery, fallback inline si indisponible
+    celery_available = False
+    try:
+        from app.workers.matching import compute_match_matrix
+        compute_match_matrix.delay(session_id)
+        celery_available = True
+    except Exception:
+        pass
+
+    if not celery_available:
+        import asyncio as _asyncio
+        from starlette.concurrency import run_in_threadpool as _run_in_threadpool
+        from app.core.database import async_session as _async_session
+        from sqlalchemy import select as _select
+
+        _sid = session_id
+
+        async def _process_matching_inline():
+            try:
+                from app.services.batch_matching import compute_batch_matching
+                await _run_in_threadpool(compute_batch_matching, _sid)
+            except Exception as _exc:
+                import structlog as _structlog
+                _structlog.get_logger().error("inline_matching_error", session_id=_sid, error=str(_exc))
+                async with _async_session() as _sess:
+                    from app.models.match_score import MatchSession as _MatchSession
+                    _r = await _sess.execute(_select(_MatchSession).where(_MatchSession.id == UUID(_sid)))
+                    _ms = _r.scalar_one_or_none()
+                    if _ms:
+                        _ms.status = "failed"
+                        await _sess.commit()
+
+        _asyncio.create_task(_process_matching_inline())
+
+    return MatchSessionResponse(
+        session_id=session_id,
+        total_pairs=total_pairs,
+        status="pending",
+    )

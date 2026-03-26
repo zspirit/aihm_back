@@ -19,8 +19,8 @@ def get_sync_session():
 
 
 @shared_task(name="cv.process", bind=True, max_retries=3)
-def process_cv(self, candidate_id: str):
-    logger.info("cv_processing_start", candidate_id=candidate_id)
+def process_cv(self, candidate_id: str, position_id: str | None = None):
+    logger.info("cv_processing_start", candidate_id=candidate_id, position_id=position_id)
 
     session = get_sync_session()
     try:
@@ -34,32 +34,37 @@ def process_cv(self, candidate_id: str):
             logger.warning("cv_processing_skip", candidate_id=candidate_id, reason="no_cv")
             return
 
-        position = session.get(Position, candidate.position_id)
-        if not position:
+        # Use explicit position_id if provided, else fall back to candidate.position_id
+        effective_position_id = UUID(position_id) if position_id else candidate.position_id
+        position = session.get(Position, effective_position_id) if effective_position_id else None
+        if candidate.position_id and not position:
             logger.warning("position_not_found", position_id=str(candidate.position_id))
-            # Continue without position-specific scoring
 
         # Parse CV
         parsed_data = parse_cv_file(candidate.cv_file_path)
-        candidate.cv_parsed_data = parsed_data
+        candidate.cv_parsed_data = {**(candidate.cv_parsed_data or {}), **parsed_data}
 
-        # Score CV against position
-        score_result = score_cv(parsed_data, position)
-        candidate.cv_score = score_result["score"]
-        candidate.cv_score_explanation = score_result["explanation"]
-        candidate.pipeline_status = "cv_analyzed"
-
-        cv_score = score_result["score"]
-
-        # Workflow automation
+        # Score CV against position (skip scoring if no position = vivier)
         auto_advanced = False
-        if position.auto_reject_threshold is not None and cv_score < position.auto_reject_threshold:
-            candidate.pipeline_status = "rejected"
-            logger.info("auto_rejected", candidate_id=candidate_id, score=cv_score, threshold=position.auto_reject_threshold)
-        elif position.auto_advance_threshold is not None and cv_score >= position.auto_advance_threshold:
-            candidate.pipeline_status = "invited"
-            auto_advanced = True
-            logger.info("auto_advanced", candidate_id=candidate_id, score=cv_score, threshold=position.auto_advance_threshold)
+        if position:
+            score_result = score_cv(parsed_data, position)
+            candidate.cv_score = score_result["score"]
+            candidate.cv_score_explanation = score_result["explanation"]
+            cv_score = score_result["score"]
+
+            # Workflow automation
+            if position.auto_reject_threshold is not None and cv_score < position.auto_reject_threshold:
+                candidate.pipeline_status = "rejected"
+                logger.info("auto_rejected", candidate_id=candidate_id, score=cv_score, threshold=position.auto_reject_threshold)
+            elif position.auto_advance_threshold is not None and cv_score >= position.auto_advance_threshold:
+                candidate.pipeline_status = "invited"
+                auto_advanced = True
+                logger.info("auto_advanced", candidate_id=candidate_id, score=cv_score, threshold=position.auto_advance_threshold)
+            else:
+                candidate.pipeline_status = "cv_analyzed"
+        else:
+            candidate.pipeline_status = "cv_analyzed"
+            logger.info("cv_parsed_no_position", candidate_id=candidate_id)
 
         session.commit()
         logger.info(
@@ -68,23 +73,28 @@ def process_cv(self, candidate_id: str):
             score=score_result["score"],
         )
 
-        # Trigger question generation + consent email
-        from app.workers.notifications import send_consent_email
-        from app.workers.question_generation import generate_questions
+        # Trigger question generation + consent email (only if position exists)
+        if position:
+            try:
+                from app.workers.notifications import send_consent_email
+                from app.workers.question_generation import generate_questions
 
-        generate_questions.delay(candidate_id)
+                generate_questions.delay(candidate_id)
 
-        if auto_advanced:
-            # Workflow automation triggered consent email
-            send_consent_email.delay(candidate_id)
-        elif position.auto_reject_threshold is None and position.auto_advance_threshold is None:
-            # No automation configured — send consent email as before
-            send_consent_email.delay(candidate_id)
+                if auto_advanced:
+                    send_consent_email.delay(candidate_id)
+                elif position.auto_reject_threshold is None and position.auto_advance_threshold is None:
+                    send_consent_email.delay(candidate_id)
+            except Exception:
+                logger.warning("celery_downstream_unavailable", candidate_id=candidate_id)
 
     except Exception as e:
         session.rollback()
         logger.error("cv_processing_error", candidate_id=candidate_id, error=str(e))
-        raise self.retry(exc=e, countdown=30)
+        try:
+            raise self.retry(exc=e, countdown=30)
+        except Exception:
+            pass  # If not in Celery context (inline), just log
     finally:
         session.close()
 

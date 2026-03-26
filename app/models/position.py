@@ -29,3 +29,4 @@ class Position(Base):
 
     tenant = relationship("Tenant", back_populates="positions")
     candidates = relationship("Candidate", back_populates="position")
+    applications = relationship("Application", back_populates="position", cascade="all, delete-orphan")

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, ForeignKey, String
+from sqlalchemy import DateTime, Float, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -13,7 +13,7 @@ class Candidate(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"))
-    position_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("positions.id"))
+    position_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("positions.id"), nullable=True)
     name: Mapped[str] = mapped_column(String(255))
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -25,7 +25,25 @@ class Candidate(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+    viewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Profile fields (intrinseque, pas lie a un poste)
+    profile_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    profile_score_explanation: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    profile_competencies: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Structure: {
+    #   "technical": [{"name": "Python", "level": 4, "normalized": "python", "demonstrated": true}],
+    #   "experience": [{"title": "Dev Senior", "company": "X", "duration_months": 24, "responsibilities": [...]}],
+    #   "education": [{"degree": "Master", "field": "CS", "institution": "..."}],
+    #   "languages": [{"name": "Francais", "level": "natif"}],
+    #   "soft_skills": ["Leadership", "Communication"]
+    # }
+    profile_suggestions: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Structure: {"suggestions": [...], "cv_quality_score": 65, "cv_quality_details": {...}}
+    tags: Mapped[list | None] = mapped_column(JSONB, nullable=True, default=list)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     position = relationship("Position", back_populates="candidates")
     consents = relationship("Consent", back_populates="candidate", cascade="all, delete-orphan")
     interviews = relationship("Interview", back_populates="candidate", cascade="all, delete-orphan")
+    applications = relationship("Application", back_populates="candidate", cascade="all, delete-orphan")

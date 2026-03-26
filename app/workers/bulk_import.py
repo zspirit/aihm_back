@@ -1,4 +1,5 @@
 import csv
+import hashlib
 import io
 import secrets
 from datetime import datetime, timezone
@@ -183,6 +184,159 @@ def process_csv_import(self, bulk_import_id: str):
     except Exception as e:
         session.rollback()
         logger.error("bulk_import_error", import_id=bulk_import_id, error=str(e))
+        try:
+            bulk_import = session.get(BulkImport, UUID(bulk_import_id))
+            if bulk_import:
+                bulk_import.status = "failed"
+                bulk_import.completed_at = datetime.now(timezone.utc)
+                bulk_import.error_details = {"error": str(e)}
+                session.commit()
+        except Exception:
+            pass
+        raise self.retry(exc=e, countdown=60)
+    finally:
+        session.close()
+
+
+@shared_task(name="bulk_import.process_cv_files", bind=True, max_retries=1)
+def process_bulk_cv_import(self, bulk_import_id: str):
+    """Traite un import massif de CVs (PDF/DOCX) stockes dans MinIO."""
+    logger.info("bulk_cv_import_start", import_id=bulk_import_id)
+
+    session = get_sync_session()
+    try:
+        from app.models.bulk_import import BulkImport
+        from app.models.candidate import Candidate
+        from app.services.storage import download_file
+
+        bulk_import = session.get(BulkImport, UUID(bulk_import_id))
+        if not bulk_import:
+            logger.error("bulk_cv_import_not_found", import_id=bulk_import_id)
+            return
+
+        bulk_import.status = "processing"
+        session.commit()
+
+        # Retrieve file paths and filenames from metadata
+        metadata = bulk_import.import_metadata or {}
+        file_paths: list[str] = metadata.get("file_paths", [])
+        filenames: list[str] = metadata.get("filenames", [])
+        auto_score: bool = metadata.get("auto_score", True)
+
+        if not file_paths:
+            bulk_import.status = "failed"
+            bulk_import.completed_at = datetime.now(timezone.utc)
+            bulk_import.error_details = {"error": "Aucun fichier a traiter"}
+            session.commit()
+            return
+
+        error_details = []
+
+        for idx, (file_path, fname) in enumerate(zip(file_paths, filenames)):
+            try:
+                # Download from MinIO
+                parts = file_path.split("/", 1)
+                if len(parts) != 2:
+                    raise ValueError(f"Chemin fichier invalide: {file_path}")
+                content = download_file(parts[0], parts[1])
+
+                # Validate format
+                ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
+                if ext not in ("pdf", "docx"):
+                    raise ValueError(f"Format non supporte: {ext}")
+
+                # Compute SHA256 for deduplication
+                file_hash = hashlib.sha256(content).hexdigest()
+
+                # Check deduplication by hash (cv_parsed_data stores hash)
+                existing = (
+                    session.query(Candidate)
+                    .filter(
+                        Candidate.tenant_id == bulk_import.tenant_id,
+                        Candidate.cv_parsed_data.op("->>")(  # type: ignore[union-attr]
+                            "file_hash"
+                        )
+                        == file_hash,
+                    )
+                    .first()
+                )
+                if existing:
+                    error_details.append(
+                        {
+                            "file": fname,
+                            "error": f"CV deja importe (doublon hash SHA256)",
+                        }
+                    )
+                    bulk_import.error_count += 1
+                    bulk_import.processed_count += 1
+                    session.commit()
+                    continue
+
+                # Extract candidate name from filename (without extension)
+                name = fname.rsplit(".", 1)[0] if "." in fname else fname
+                # Clean up name: replace underscores/hyphens with spaces, title case
+                name = name.replace("_", " ").replace("-", " ").strip()
+                if not name:
+                    name = f"Candidat {idx + 1}"
+
+                # Create candidate
+                candidate = Candidate(
+                    tenant_id=bulk_import.tenant_id,
+                    position_id=bulk_import.position_id,  # May be None (vivier)
+                    name=name,
+                    cv_file_path=file_path,
+                    pipeline_status="cv_uploaded",
+                    cv_parsed_data={"file_hash": file_hash, "original_filename": fname},
+                )
+                session.add(candidate)
+                session.flush()
+
+                bulk_import.success_count += 1
+                bulk_import.processed_count += 1
+                session.commit()
+
+                # Launch CV scoring if requested
+                if auto_score:
+                    try:
+                        from app.workers.cv_processing import process_cv
+
+                        process_cv.delay(str(candidate.id))
+                    except Exception as score_err:
+                        logger.warning(
+                            "bulk_cv_auto_score_failed",
+                            candidate_id=str(candidate.id),
+                            error=str(score_err),
+                        )
+
+            except Exception as e:
+                logger.error("bulk_cv_file_error", file=fname, error=str(e))
+                error_details.append({"file": fname, "error": str(e)})
+                bulk_import.error_count += 1
+                bulk_import.processed_count += 1
+                try:
+                    session.rollback()
+                    bulk_import = session.get(BulkImport, UUID(bulk_import_id))
+                    session.commit()
+                except Exception:
+                    pass
+
+        # Finalize
+        bulk_import.status = "completed"
+        bulk_import.completed_at = datetime.now(timezone.utc)
+        if error_details:
+            bulk_import.error_details = {"errors": error_details}
+        session.commit()
+
+        logger.info(
+            "bulk_cv_import_done",
+            import_id=bulk_import_id,
+            success=bulk_import.success_count,
+            errors=bulk_import.error_count,
+        )
+
+    except Exception as e:
+        session.rollback()
+        logger.error("bulk_cv_import_error", import_id=bulk_import_id, error=str(e))
         try:
             bulk_import = session.get(BulkImport, UUID(bulk_import_id))
             if bulk_import:
