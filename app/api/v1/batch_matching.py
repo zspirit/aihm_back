@@ -600,7 +600,7 @@ async def matching_bulk_action(
         raise HTTPException(status_code=400, detail="Aucun candidat selectionne")
     if len(candidate_ids) > 50:
         raise HTTPException(status_code=400, detail="Maximum 50 candidats")
-    if action not in ("send_consent", "assign_all"):
+    if action not in ("send_consent", "assign_all", "schedule_calls"):
         raise HTTPException(status_code=400, detail="Action non supportee")
 
     uuids = [UUID(c) for c in candidate_ids]
@@ -684,6 +684,52 @@ async def matching_bulk_action(
                 pipeline_status="new",
             )
             db.add(app)
+            results.append({"candidate_id": cid_str, "status": "ok"})
+
+    elif action == "schedule_calls":
+        from app.models.consent import Consent
+        from app.models.interview import Interview
+        for cid_str in candidate_ids:
+            cid = UUID(cid_str)
+            candidate = candidates.get(cid)
+            if not candidate:
+                results.append({"candidate_id": cid_str, "status": "error", "reason": "Candidat introuvable"})
+                continue
+            if not candidate.phone:
+                results.append({"candidate_id": cid_str, "status": "error", "reason": "Telephone manquant"})
+                continue
+            # Check consent
+            consent_res = await db.execute(
+                select(Consent).where(
+                    Consent.candidate_id == cid,
+                    Consent.type == "call_recording",
+                    Consent.granted.is_(True),
+                )
+            )
+            if not consent_res.scalar_one_or_none():
+                results.append({"candidate_id": cid_str, "status": "error", "reason": "Consentement non donne"})
+                continue
+            # Check max attempts
+            attempts_res = await db.execute(select(Interview).where(Interview.candidate_id == cid))
+            attempt_count = len(attempts_res.scalars().all())
+            if attempt_count >= 3:
+                results.append({"candidate_id": cid_str, "status": "error", "reason": "Max tentatives (3)"})
+                continue
+            # Create interview + trigger call
+            interview = Interview(
+                candidate_id=cid,
+                position_id=candidate.position_id,
+                tenant_id=tenant_id,
+                attempt_number=attempt_count + 1,
+            )
+            db.add(interview)
+            await db.flush()
+            candidate.pipeline_status = "call_scheduled"
+            try:
+                from app.workers.telephony import initiate_call
+                initiate_call.delay(str(interview.id))
+            except Exception:
+                pass
             results.append({"candidate_id": cid_str, "status": "ok"})
 
     await db.commit()
