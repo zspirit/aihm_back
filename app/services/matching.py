@@ -64,8 +64,8 @@ async def pre_filter_candidates(
         if required_skills:
             parsed_skills = candidate.cv_parsed_data.get("skills", []) if candidate.cv_parsed_data else []
             # Check if at least one skill matches (case-insensitive)
-            parsed_skills_lower = [s.lower() for s in parsed_skills]
-            required_skills_lower = [s.lower() for s in required_skills]
+            parsed_skills_lower = [s.lower() if isinstance(s, str) else s.get("name", "").lower() for s in parsed_skills]
+            required_skills_lower = [s.lower() if isinstance(s, str) else s.get("name", "").lower() for s in required_skills]
             has_match = any(skill in parsed_skills_lower for skill in required_skills_lower)
             if not has_match:
                 continue

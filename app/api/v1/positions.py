@@ -403,9 +403,12 @@ REGLES:
 - level_required entre 1 et 5
 - Reponds en francais"""
 
+    import asyncio
+
     client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
 
-    response = client.messages.create(
+    response = await asyncio.to_thread(
+        client.messages.create,
         model=settings.ANTHROPIC_MODEL,
         max_tokens=2000,
         timeout=60.0,

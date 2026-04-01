@@ -43,7 +43,7 @@ async def list_candidate_applications(
     db: AsyncSession = Depends(get_db),
 ):
     """Lister toutes les candidatures d'un candidat avec le titre du poste."""
-    await _get_candidate_or_404(candidate_id, tenant_id, db)
+    candidate = await _get_candidate_or_404(candidate_id, tenant_id, db)
 
     query = (
         select(Application, Position.title)
@@ -56,7 +56,7 @@ async def list_candidate_applications(
     )
     rows = (await db.execute(query)).all()
 
-    return [
+    results = [
         ApplicationResponse(
             id=str(app.id),
             candidate_id=str(app.candidate_id),
@@ -71,6 +71,29 @@ async def list_candidate_applications(
         )
         for app, pos_title in rows
     ]
+
+    # Include the candidate's direct position if no Application exists for it
+    if candidate.position_id:
+        app_position_ids = {app.position_id for app, _ in rows}
+        if candidate.position_id not in app_position_ids:
+            pos_result = await db.execute(
+                select(Position.title).where(Position.id == candidate.position_id)
+            )
+            pos_title = pos_result.scalar_one_or_none()
+            results.insert(0, ApplicationResponse(
+                id=f"direct-{candidate.id}",
+                candidate_id=str(candidate.id),
+                position_id=str(candidate.position_id),
+                position_title=pos_title or "—",
+                match_score=candidate.cv_score,
+                match_score_explanation=None,
+                pipeline_status=candidate.pipeline_status or "new",
+                decision="pending",
+                decision_note=None,
+                created_at=candidate.created_at,
+            ))
+
+    return results
 
 
 @router.post(

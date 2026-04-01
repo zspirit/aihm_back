@@ -1,3 +1,4 @@
+import asyncio
 from uuid import UUID
 
 import structlog
@@ -58,11 +59,13 @@ async def match_candidates_for_position(
         "seniority_level": position.seniority_level,
     }
 
-    matches = ai_score_matches(candidates, position_data, limit=20)
-
-    match_results = [MatchResult(**m) for m in matches]
-
-    return MatchResponse(matches=match_results)
+    try:
+        matches = await asyncio.to_thread(ai_score_matches, candidates, position_data, 20)
+        match_results = [MatchResult(**m) for m in matches]
+        return MatchResponse(matches=match_results)
+    except Exception as e:
+        logger.error("match_endpoint_error", error=str(e), error_type=type(e).__name__)
+        raise HTTPException(status_code=502, detail=f"Erreur lors du matching: {str(e)}")
 
 
 @router.post("/match", response_model=MatchResponse)
@@ -95,7 +98,7 @@ async def match_candidates_with_criteria(
         "seniority_level": request.seniority_level,
     }
 
-    matches = ai_score_matches(candidates, position_data, limit=request.limit)
+    matches = await asyncio.to_thread(ai_score_matches, candidates, position_data, request.limit)
 
     match_results = [MatchResult(**m) for m in matches]
 
