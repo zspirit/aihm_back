@@ -145,9 +145,20 @@ async def create_match_session(
         pairs_to_compute=pairs_to_compute,
     )
 
-    # Launch Celery task
-    from app.workers.matching import compute_match_matrix
-    compute_match_matrix.delay(session_id)
+    # Launch Celery task or inline fallback
+    try:
+        from app.workers.matching import compute_match_matrix
+        compute_match_matrix.delay(session_id)
+    except Exception:
+        # Celery unavailable — run inline in background thread
+        import asyncio
+        from app.services.batch_matching import compute_batch_matching
+
+        async def _run_inline():
+            await asyncio.to_thread(compute_batch_matching, session_id)
+
+        asyncio.create_task(_run_inline())
+        logger.warning("celery_unavailable_matching_inline", session_id=session_id)
 
     return MatchSessionResponse(
         session_id=session_id,
