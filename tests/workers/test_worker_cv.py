@@ -182,8 +182,41 @@ def test_update_progress_success():
 
 def test_update_progress_completes():
     from app.workers.cv_processing import _update_bulk_import_progress
-    bi = MagicMock(processed_count=5, total_count=5, status="processing", completed_at=None)
+    bi = MagicMock(processed_count=5, total_count=5, status="processing", completed_at=None, error_count=0)
     sess = MagicMock(); sess.get.return_value = bi
     _update_bulk_import_progress(sess, str(uuid.uuid4()), True)
     assert bi.status == "completed"
     assert bi.completed_at is not None
+
+def test_update_progress_completed_with_errors():
+    from app.workers.cv_processing import _update_bulk_import_progress
+    bi = MagicMock(processed_count=5, total_count=5, status="processing", completed_at=None, error_count=2)
+    sess = MagicMock(); sess.get.return_value = bi
+    _update_bulk_import_progress(sess, str(uuid.uuid4()), False)
+    assert bi.status == "completed_with_errors"
+    assert bi.completed_at is not None
+
+
+# ─── cv_processing status ──────────────────────────────────────────────────
+
+def test_process_cv_sets_processing_status():
+    """process_cv sets pipeline_status to 'cv_processing' at start."""
+    pid = str(uuid.uuid4()); c = _make_cand(pos_id=pid); p = _make_pos(pid=uuid.UUID(pid)); t = _make_tenant()
+    sess = _mock_session(c, p, t)
+    statuses = []
+    orig_commit = sess.commit
+    def track_commit():
+        statuses.append(c.pipeline_status)
+        orig_commit()
+    sess.commit = track_commit
+    _run_process_cv(str(c.id), sess, position_id=pid)
+    assert "cv_processing" in statuses  # First commit sets cv_processing
+
+def test_process_cv_error_sets_failed():
+    """process_cv sets pipeline_status to 'cv_failed' on error."""
+    c = _make_cand(); t = _make_tenant(); sess = _mock_session(c, None, t)
+    with patch("app.workers.cv_processing.get_sync_session", return_value=sess), \
+         patch("app.workers.cv_processing.parse_cv_file", side_effect=RuntimeError("broken")):
+        from app.workers.cv_processing import process_cv
+        process_cv(str(c.id))
+    assert c.pipeline_status == "cv_failed"

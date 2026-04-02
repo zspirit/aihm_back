@@ -188,9 +188,8 @@ Format JSON attendu:
                     }
                 )
 
-        # Sort by match_score DESC and limit
+        # Sort by match_score DESC (return ALL scores, no truncation)
         enriched_matches.sort(key=lambda x: x["match_score"], reverse=True)
-        enriched_matches = enriched_matches[:limit]
 
         logger.info("ai_score_matches_success", matches_count=len(enriched_matches))
         return enriched_matches

@@ -46,7 +46,7 @@ def _load_candidates(
     candidate_ids: list[uuid.UUID] | None = None,
 ) -> list[dict]:
     """Load candidates with parsed CV data as dicts for AI scoring."""
-    query = select(Candidate, Position).join(
+    query = select(Candidate, Position).outerjoin(
         Position, Candidate.position_id == Position.id
     ).where(
         Candidate.tenant_id == tenant_id,
@@ -64,8 +64,8 @@ def _load_candidates(
             "candidate_id": str(candidate.id),
             "name": candidate.name,
             "email": candidate.email,
-            "source_position_id": str(position.id),
-            "source_position_title": position.title,
+            "source_position_id": str(position.id) if position else None,
+            "source_position_title": position.title if position else "Vivier",
             "cv_score": candidate.cv_score,
             "cv_parsed_data": candidate.cv_parsed_data or {},
         })
@@ -143,6 +143,11 @@ def compute_batch_matching(session_id: str) -> None:
 
         # Load all candidates once
         all_candidates = _load_candidates(db, tenant_id, candidate_ids)
+        expected_count = len(candidate_ids) if candidate_ids else None
+        if expected_count and len(all_candidates) < expected_count:
+            logger.warning("candidates_filtered",
+                           expected=expected_count, loaded=len(all_candidates),
+                           missing=expected_count - len(all_candidates))
         if not all_candidates:
             session.status = "completed"
             session.completed_at = datetime.now(timezone.utc)

@@ -736,10 +736,11 @@ async def list_recent_imports(
     db: AsyncSession = Depends(get_db),
 ):
     """List recent imports (last 20) for the current tenant, with metadata."""
-    # Auto-cleanup: mark stuck imports (pending/processing with 0 progress for 30+ min) as failed
+    # Auto-cleanup: mark stuck imports as failed
     from datetime import datetime, timedelta, timezone
 
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
+    # 1) Stuck with 0 progress for 30+ min
     stuck_result = await db.execute(
         select(BulkImport).where(
             BulkImport.tenant_id == current_user.tenant_id,
@@ -752,6 +753,20 @@ async def list_recent_imports(
         stuck.status = "failed"
         stuck.completed_at = datetime.now(timezone.utc)
         stuck.error_details = {"error": "Import bloque (timeout 30min sans progression)"}
+
+    # 2) All CVs processed but status still "processing" (missed completion)
+    done_result = await db.execute(
+        select(BulkImport).where(
+            BulkImport.tenant_id == current_user.tenant_id,
+            BulkImport.status == "processing",
+            BulkImport.total_count > 0,
+            BulkImport.processed_count >= BulkImport.total_count,
+        )
+    )
+    for done in done_result.scalars().all():
+        done.status = "completed_with_errors" if done.error_count > 0 else "completed"
+        done.completed_at = done.completed_at or datetime.now(timezone.utc)
+
     await db.commit()
 
     recent_cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)

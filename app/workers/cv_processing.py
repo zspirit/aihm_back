@@ -7,15 +7,9 @@ logger = structlog.get_logger()
 
 
 def get_sync_session():
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session
+    from app.core.database import sync_session_factory
 
-    from app.core.config import get_settings
-
-    settings = get_settings()
-    sync_url = settings.DATABASE_URL.replace("+asyncpg", "")
-    engine = create_engine(sync_url)
-    return Session(engine)
+    return sync_session_factory()
 
 
 @shared_task(name="cv.process", bind=True, max_retries=3)
@@ -35,6 +29,10 @@ def process_cv(self, candidate_id: str, position_id: str | None = None, bulk_imp
             logger.warning("cv_processing_skip", candidate_id=candidate_id, reason="no_cv")
             success = True  # Not an error, just nothing to do
             return
+
+        # Mark as processing
+        candidate.pipeline_status = "cv_processing"
+        session.commit()
 
         # Use explicit position_id if provided, else fall back to candidate.position_id
         effective_position_id = UUID(position_id) if position_id else candidate.position_id
@@ -108,6 +106,22 @@ def process_cv(self, candidate_id: str, position_id: str | None = None, bulk_imp
     except Exception as e:
         session.rollback()
         logger.error("cv_processing_error", candidate_id=candidate_id, error=str(e))
+
+        # Mark candidate as failed so it doesn't stay stuck
+        try:
+            from uuid import UUID as _UUID
+            from app.models.candidate import Candidate as _Cand
+            cand = session.get(_Cand, _UUID(candidate_id))
+            if cand and cand.pipeline_status == "cv_processing":
+                cand.pipeline_status = "cv_failed"
+                session.commit()
+                logger.info("cv_marked_failed", candidate_id=candidate_id)
+        except Exception:
+            try:
+                session.rollback()
+            except Exception:
+                pass
+
         try:
             raise self.retry(exc=e, countdown=30)
         except Exception:
@@ -144,7 +158,7 @@ def _update_bulk_import_progress(session, bulk_import_id: str, success: bool):
         from app.models.bulk_import import BulkImport
         bi = session.get(BulkImport, bid)
         if bi and bi.processed_count >= bi.total_count:
-            bi.status = "completed"
+            bi.status = "completed_with_errors" if bi.error_count > 0 else "completed"
             bi.completed_at = datetime.now(timezone.utc)
             session.commit()
             logger.info("bulk_import_completed", import_id=bulk_import_id,
