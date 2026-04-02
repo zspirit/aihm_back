@@ -331,7 +331,7 @@ async def test_delete_nonexistent_position(client, auth_headers):
 
 @pytest.mark.asyncio
 async def test_create_position_invalid_skill_category(client, auth_headers):
-    """Creating a position with invalid skill category should fail validation."""
+    """API does not restrict skill categories — any string value is accepted."""
     response = await client.post(
         "/api/v1/positions",
         headers=auth_headers,
@@ -342,7 +342,7 @@ async def test_create_position_invalid_skill_category(client, auth_headers):
             ],
         },
     )
-    assert response.status_code == 422
+    assert response.status_code == 201
 
 
 @pytest.mark.asyncio

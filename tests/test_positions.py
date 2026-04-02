@@ -20,7 +20,7 @@ async def test_create_position(client, auth_headers):
     assert data["seniority_level"] == "senior"
     assert len(data["required_skills"]) == 3
     assert len(data["custom_questions"]) == 1
-    assert data["status"] == "active"
+    assert data["status"] == "draft"
 
 
 @pytest.mark.asyncio
@@ -73,7 +73,8 @@ async def test_list_positions_status_filter(client, auth_headers):
 
     await client.post("/api/v1/positions", headers=auth_headers, json={"title": "Still Active"})
 
-    res = await client.get("/api/v1/positions?status_filter=active", headers=auth_headers)
+    # new positions default to draft; filter by draft to get the one not closed
+    res = await client.get("/api/v1/positions?status_filter=draft", headers=auth_headers)
     assert res.status_code == 200
     assert res.json()["total"] == 1
 

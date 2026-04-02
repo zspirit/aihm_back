@@ -3,7 +3,9 @@ import os
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.core.database import Base, get_db
 from app.core.security import create_access_token, hash_password
@@ -15,24 +17,40 @@ TEST_DATABASE_URL = os.getenv(
     "postgresql+asyncpg://aihm:aihm@localhost:5432/aihm",
 )
 
-test_engine = create_async_engine(TEST_DATABASE_URL, echo=False)
+test_engine = create_async_engine(TEST_DATABASE_URL, echo=False, poolclass=NullPool)
 TestSession = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
 
 
-@pytest_asyncio.fixture()
-async def _setup_db():
-    """Create tables, yield, then drop. Skips if PostgreSQL unavailable."""
+@pytest_asyncio.fixture(scope="session")
+async def _create_tables():
+    """Create all tables once per test session. Skips only if PostgreSQL is unreachable."""
     try:
         async with test_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
             await conn.run_sync(Base.metadata.create_all)
-    except Exception:
-        pytest.skip("PostgreSQL not available (start Docker)")
+    except (ConnectionRefusedError, OSError) as e:
+        pytest.skip(f"PostgreSQL not available: {e}")
+    except Exception as e:
+        if "connect" in str(e).lower() or "refused" in str(e).lower():
+            pytest.skip(f"PostgreSQL not available: {e}")
+        raise
     yield
     try:
         async with test_engine.begin() as conn:
             await conn.run_sync(Base.metadata.drop_all)
     except Exception:
         pass
+
+
+@pytest_asyncio.fixture()
+async def _setup_db(_create_tables):
+    """Truncate all tables between tests for fast isolation."""
+    yield
+    async with test_engine.begin() as conn:
+        # Truncate all tables in one statement (CASCADE handles FK constraints)
+        table_names = [t.name for t in reversed(Base.metadata.sorted_tables)]
+        if table_names:
+            await conn.execute(text(f"TRUNCATE {', '.join(table_names)} CASCADE"))
 
 
 @pytest_asyncio.fixture()
@@ -57,6 +75,47 @@ async def client(_setup_db):
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def _disable_rate_limiting():
+    """Disable slowapi rate limiting in tests."""
+    from app.core.rate_limit import limiter
+    limiter.enabled = False
+    yield
+    limiter.enabled = True
+
+
+@pytest.fixture(autouse=True)
+def _mock_celery_tasks():
+    """Globally mock all Celery task.delay() to prevent Redis connection in tests."""
+    from unittest.mock import MagicMock, patch
+
+    tasks = [
+        "app.workers.cv_processing.process_cv.delay",
+        "app.workers.matching.compute_match_matrix.delay",
+        "app.workers.bulk_import.process_bulk_cv_import.delay",
+        "app.workers.bulk_import.process_csv_import.delay",
+        "app.workers.notifications.send_consent_email.delay",
+        "app.workers.notifications.send_consent_reminder.delay",
+        "app.workers.notifications.send_email.delay",
+        "app.workers.question_generation.generate_questions.delay",
+        "app.workers.telephony.initiate_call.delay",
+        "app.workers.report_generation.generate_report.delay",
+        "app.workers.transcription.transcribe.delay",
+        "app.workers.analysis.analyze.delay",
+    ]
+    patches = []
+    for t in tasks:
+        try:
+            p = patch(t, MagicMock(return_value=None))
+            p.start()
+            patches.append(p)
+        except (AttributeError, ModuleNotFoundError):
+            pass
+    yield
+    for p in patches:
+        p.stop()
 
 
 async def _create_user(db_session, email, role="admin", tenant_name="Test Corp"):
