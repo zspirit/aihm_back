@@ -82,7 +82,10 @@ async def register(request: Request, data: RegisterRequest, db: AsyncSession = D
         verify_url=verify_url,
         tenant_name=tenant.name,
     )
-    send_email.delay(user.email, "Verifiez votre adresse email - AIHM", html)
+    try:
+        send_email.delay(user.email, "Verifiez votre adresse email - AIHM", html)
+    except Exception:
+        pass  # Email will be sent on next login or via resend
 
     await log_action(
         db,
@@ -371,7 +374,10 @@ async def forgot_password(
             reset_url=reset_url,
             tenant_name=tenant.name,
         )
-        send_email.delay(user.email, "Reinitialisation de votre mot de passe - AIHM", html)
+        try:
+            send_email.delay(user.email, "Reinitialisation de votre mot de passe - AIHM", html)
+        except Exception:
+            pass
 
     # Always return success to avoid email enumeration
     return {
@@ -503,7 +509,10 @@ async def resend_verification(
         verify_url=verify_url,
         tenant_name=tenant.name,
     )
-    send_email.delay(current_user.email, "Verifiez votre adresse email - AIHM", html)
+    try:
+        send_email.delay(current_user.email, "Verifiez votre adresse email - AIHM", html)
+    except Exception:
+        pass
 
     return {"status": "ok"}
 
