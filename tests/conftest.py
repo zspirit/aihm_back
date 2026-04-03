@@ -14,7 +14,7 @@ from app.main import app
 # PostgreSQL required for integration tests (Docker must be running)
 TEST_DATABASE_URL = os.getenv(
     "TEST_DATABASE_URL",
-    "postgresql+asyncpg://aihm:aihm@localhost:5432/aihm",
+    "postgresql+asyncpg://aihm:aihm@localhost:5432/aihm_test",
 )
 
 test_engine = create_async_engine(TEST_DATABASE_URL, echo=False, poolclass=NullPool)
