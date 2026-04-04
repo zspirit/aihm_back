@@ -29,6 +29,8 @@ async def download_cv(
         raise HTTPException(status_code=404, detail="Candidat introuvable")
     if not candidate.cv_file_path:
         raise HTTPException(status_code=404, detail="Aucun CV disponible pour ce candidat")
+    if candidate.is_anonymized:
+        raise HTTPException(status_code=403, detail="Le CV original n'est pas disponible en mode anonymise")
     try:
         from app.services.storage import download_file
         parts = candidate.cv_file_path.split("/", 1)
