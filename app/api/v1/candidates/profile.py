@@ -9,8 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependencies import get_tenant_id, require_role
 from app.models.candidate import Candidate
+from app.models.interview import Interview
+from app.models.analysis import Analysis
 from app.models.user import User
+from app.schemas.candidate import CandidateSummaryResponse
 from app.services.audit import log_action
+from app.services.cv_anonymizer import anonymize_candidate_data
 
 router = APIRouter(tags=["candidates"])
 
@@ -513,3 +517,194 @@ async def export_profile_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get(
+    "/candidates/{candidate_id}/summary",
+    response_model=CandidateSummaryResponse,
+)
+async def get_candidate_summary(
+    candidate_id: UUID,
+    current_user: User = Depends(require_role("admin", "recruiter")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Resume candidat 30 secondes — genere par Claude en temps reel."""
+    from starlette.concurrency import run_in_threadpool
+
+    from app.services.candidate_summary import generate_candidate_summary
+
+    # Charger le candidat (multi-tenant)
+    result = await db.execute(
+        select(Candidate).where(
+            Candidate.id == candidate_id,
+            Candidate.tenant_id == current_user.tenant_id,
+        )
+    )
+    candidate = result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidat introuvable")
+
+    if not candidate.cv_parsed_data:
+        raise HTTPException(
+            status_code=400,
+            detail="CV non analyse. Lancez d'abord l'analyse du CV.",
+        )
+
+    # Charger la position (si liee)
+    position_data = None
+    if candidate.position_id:
+        from app.models.position import Position
+
+        pos_result = await db.execute(
+            select(Position).where(Position.id == candidate.position_id)
+        )
+        position = pos_result.scalar_one_or_none()
+        if position:
+            position_data = {
+                "title": position.title,
+                "required_skills": position.required_skills,
+                "seniority_level": position.seniority_level,
+            }
+
+    # Charger le dernier entretien complete + analyse
+    interview_data = None
+    analysis_data = None
+    interview_result = await db.execute(
+        select(Interview)
+        .where(
+            Interview.candidate_id == candidate_id,
+            Interview.tenant_id == current_user.tenant_id,
+            Interview.status == "completed",
+        )
+        .order_by(Interview.ended_at.desc())
+        .limit(1)
+    )
+    interview = interview_result.scalar_one_or_none()
+    if interview:
+        interview_data = {
+            "status": interview.status,
+            "duration_seconds": interview.duration_seconds,
+            "questions_asked": interview.questions_asked,
+        }
+        # Charger l'analyse liee
+        analysis_result = await db.execute(
+            select(Analysis).where(Analysis.interview_id == interview.id)
+        )
+        analysis = analysis_result.scalar_one_or_none()
+        if analysis:
+            analysis_data = {
+                "scores": analysis.scores,
+                "skills_extracted": analysis.skills_extracted,
+                "communication_indicators": analysis.communication_indicators,
+                "score_explanations": analysis.score_explanations,
+            }
+
+    # Preparer les donnees candidat
+    candidate_dict = {
+        "name": candidate.name,
+        "cv_parsed_data": candidate.cv_parsed_data,
+        "cv_score": candidate.cv_score,
+        "profile_score": candidate.profile_score,
+    }
+
+    try:
+        summary = await run_in_threadpool(
+            generate_candidate_summary,
+            candidate_dict,
+            position_data,
+            interview_data,
+            analysis_data,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Erreur de parsing de la reponse Claude : {e}",
+        )
+    except Exception as e:
+        import structlog
+
+        _log = structlog.get_logger()
+        _log.error(
+            "candidate_summary_claude_error",
+            candidate_id=str(candidate_id),
+            error=str(e),
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Erreur lors de l'appel a Claude. Veuillez reessayer.",
+        )
+
+    return CandidateSummaryResponse(
+        candidate_id=str(candidate.id),
+        candidate_name=candidate.name,
+        **summary,
+    )
+
+
+@router.get("/candidates/{candidate_id}/anonymized")
+async def get_anonymized_candidate(
+    candidate_id: UUID,
+    current_user: User = Depends(require_role("admin", "recruiter", "viewer")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retourne les donnees CV anonymisees du candidat."""
+    result = await db.execute(
+        select(Candidate).where(
+            Candidate.id == candidate_id,
+            Candidate.tenant_id == current_user.tenant_id,
+        )
+    )
+    candidate = result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidat introuvable")
+
+    if not candidate.cv_parsed_data:
+        raise HTTPException(
+            status_code=400,
+            detail="CV non analyse. Lancez d'abord l'analyse du CV.",
+        )
+
+    anonymized = anonymize_candidate_data(str(candidate.id), candidate.cv_parsed_data)
+    return {
+        "candidate_id": str(candidate.id),
+        "is_anonymized": candidate.is_anonymized,
+        "data": anonymized,
+    }
+
+
+@router.patch("/candidates/{candidate_id}/anonymize")
+async def toggle_anonymize(
+    candidate_id: UUID,
+    current_user: User = Depends(require_role("admin", "recruiter")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Active/desactive le mode anonymise pour un candidat."""
+    result = await db.execute(
+        select(Candidate).where(
+            Candidate.id == candidate_id,
+            Candidate.tenant_id == current_user.tenant_id,
+        )
+    )
+    candidate = result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidat introuvable")
+
+    candidate.is_anonymized = not candidate.is_anonymized
+
+    await log_action(
+        db,
+        tenant_id=current_user.tenant_id,
+        user_id=current_user.id,
+        action="toggle_anonymize",
+        entity_type="candidate",
+        entity_id=str(candidate_id),
+        details={"is_anonymized": candidate.is_anonymized},
+    )
+
+    await db.commit()
+    await db.refresh(candidate)
+
+    return {
+        "candidate_id": str(candidate.id),
+        "is_anonymized": candidate.is_anonymized,
+    }

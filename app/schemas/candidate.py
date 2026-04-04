@@ -147,3 +147,14 @@ class TopPositionsResponse(BaseModel):
 
 class ScoringHistoryResponse(BaseModel):
     entries: list[dict]
+
+
+class CandidateSummaryResponse(BaseModel):
+    candidate_id: str
+    candidate_name: str
+    pitch: str
+    strengths: list[str] = Field(default_factory=list, max_length=3)
+    concerns: list[str] = Field(default_factory=list, max_length=2)
+    overall_score: float
+    recommendation: str = Field(description="go | no_go | to_deepen")
+    generated_at: str

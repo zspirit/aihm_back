@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -42,6 +42,13 @@ class Candidate(Base):
     # Structure: {"suggestions": [...], "cv_quality_score": 65, "cv_quality_details": {...}}
     tags: Mapped[list | None] = mapped_column(JSONB, nullable=True, default=list)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Feedback candidat
+    feedback_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    feedback_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Anonymisation
+    is_anonymized: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     position = relationship("Position", back_populates="candidates")
     consents = relationship("Consent", back_populates="candidate", cascade="all, delete-orphan")

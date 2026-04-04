@@ -98,6 +98,7 @@ from app.api.v1.bulk_import import imports_router as bulk_imports_router
 from app.api.v1.matching import router as matching_router
 from app.api.v1.batch_matching import router as batch_matching_router
 from app.api.v1.reports import router as reports_router
+from app.api.v1.pipeline import router as pipeline_router
 from app.api.v1.settings import router as settings_router
 
 app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
@@ -117,6 +118,7 @@ app.include_router(bulk_imports_router, prefix=settings.API_V1_PREFIX)
 app.include_router(matching_router, prefix=settings.API_V1_PREFIX)
 app.include_router(batch_matching_router, prefix=settings.API_V1_PREFIX)
 app.include_router(reports_router, prefix=settings.API_V1_PREFIX)
+app.include_router(pipeline_router, prefix=settings.API_V1_PREFIX)
 app.include_router(settings_router, prefix=settings.API_V1_PREFIX)
 
 
