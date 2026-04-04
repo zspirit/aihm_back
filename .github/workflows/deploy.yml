@@ -1,11 +1,14 @@
 name: Deploy Backend
 
 on:
-  push:
+  workflow_run:
+    workflows: ["Test Backend"]
+    types: [completed]
     branches: [main]
 
 jobs:
   deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to VPS

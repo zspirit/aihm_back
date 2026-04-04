@@ -3,8 +3,9 @@ import os
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
 from app.core.database import Base, get_db
@@ -19,6 +20,11 @@ TEST_DATABASE_URL = os.getenv(
 
 test_engine = create_async_engine(TEST_DATABASE_URL, echo=False, poolclass=NullPool)
 TestSession = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
+
+# Sync engine/session for tests that call Celery workers directly (process_cv, etc.)
+_sync_test_url = TEST_DATABASE_URL.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+test_sync_engine = create_engine(_sync_test_url, echo=False, poolclass=NullPool)
+TestSyncSession = sessionmaker(test_sync_engine, class_=Session, expire_on_commit=False)
 
 
 @pytest_asyncio.fixture(scope="session")

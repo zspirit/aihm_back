@@ -9,12 +9,13 @@ from io import BytesIO
 from unittest.mock import MagicMock, patch
 
 import pytest
+from tests.conftest import _create_user, TestSession, TestSyncSession
 from tests.conftest_mocks import MOCK_CV_PARSED, MOCK_CV_QUALITY, MOCK_CV_SCORE, _make_claude_response
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
-async def _inject_candidate(db_session, tenant_id, position_id=None, name="Candidat",
+async def _inject_candidate(session, tenant_id, position_id=None, name="Candidat",
                             cv_file_path=None, cv_parsed_data=None, cv_score=None, pipeline_status="new"):
     from app.models.candidate import Candidate
     cand = Candidate(
@@ -23,13 +24,12 @@ async def _inject_candidate(db_session, tenant_id, position_id=None, name="Candi
         cv_file_path=cv_file_path, cv_parsed_data=cv_parsed_data,
         cv_score=cv_score, pipeline_status=pipeline_status,
     )
-    db_session.add(cand)
-    await db_session.commit()
-    await db_session.refresh(cand)
+    session.add(cand)
+    await session.flush()
     return cand
 
 
-async def _make_tenant_pos_cand(db_session, *, tenant_name="T", auto_reject=None, auto_advance=None,
+async def _make_tenant_pos_cand(session, *, tenant_name="T", auto_reject=None, auto_advance=None,
                                  cv_path="cvs/fake.pdf", skills_weight=50, exp_weight=30, edu_weight=20):
     from app.models.tenant import Tenant
     from app.models.user import User
@@ -39,24 +39,20 @@ async def _make_tenant_pos_cand(db_session, *, tenant_name="T", auto_reject=None
 
     tenant = Tenant(name=tenant_name, scoring_skills_weight=skills_weight,
                     scoring_experience_weight=exp_weight, scoring_education_weight=edu_weight)
-    db_session.add(tenant)
-    await db_session.commit()
-    await db_session.refresh(tenant)
+    session.add(tenant)
+    await session.flush()
     user = User(tenant_id=tenant.id, email=f"{tenant_name}@t.com", password_hash=hash_password("p"), full_name="U", role="admin")
-    db_session.add(user)
-    await db_session.commit()
-    await db_session.refresh(user)
+    session.add(user)
+    await session.flush()
     pos = Position(tenant_id=tenant.id, title="Dev", description="D", required_skills=["Python"],
                    seniority_level="mid", created_by=user.id,
                    auto_reject_threshold=auto_reject, auto_advance_threshold=auto_advance)
-    db_session.add(pos)
-    await db_session.commit()
-    await db_session.refresh(pos)
+    session.add(pos)
+    await session.flush()
     cand = Candidate(tenant_id=tenant.id, position_id=pos.id, name=f"C_{tenant_name}",
                      email=f"c_{tenant_name}@t.com", cv_file_path=cv_path)
-    db_session.add(cand)
-    await db_session.commit()
-    await db_session.refresh(cand)
+    session.add(cand)
+    await session.commit()
     return tenant, user, pos, cand
 
 
@@ -65,15 +61,16 @@ def _patch_cv_processing(score_response):
     from contextlib import contextmanager
     @contextmanager
     def _ctx():
-        with patch("anthropic.Anthropic") as mc:
-            inst = MagicMock()
-            inst.messages.create = MagicMock(return_value=_make_claude_response(score_response))
-            mc.return_value = inst
-            with patch("app.services.storage.download_file", return_value=b"%PDF fake"):
-                with patch("app.workers.cv_processing.parse_pdf", return_value=MOCK_CV_PARSED):
-                    with patch("app.workers.question_generation.generate_questions.delay"):
-                        with patch("app.workers.notifications.send_consent_email.delay"):
-                            yield inst
+        with patch("app.workers.cv_processing.get_sync_session", TestSyncSession):
+            with patch("anthropic.Anthropic") as mc:
+                inst = MagicMock()
+                inst.messages.create = MagicMock(return_value=_make_claude_response(score_response))
+                mc.return_value = inst
+                with patch("app.services.storage.download_file", return_value=b"%PDF fake"):
+                    with patch("app.workers.cv_processing.parse_pdf", return_value=MOCK_CV_PARSED):
+                        with patch("app.workers.question_generation.generate_questions.delay"):
+                            with patch("app.workers.notifications.send_consent_email.delay"):
+                                yield inst
     return _ctx()
 
 
@@ -112,21 +109,24 @@ async def test_score_cv_vivier_quality():
 # ─── 3. Tenant scoring weights ──────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_scoring_weights_from_tenant(db_session):
-    tenant, user, pos, cand = await _make_tenant_pos_cand(
-        db_session, tenant_name="Weights", skills_weight=60, exp_weight=25, edu_weight=15)
+async def test_scoring_weights_from_tenant(_setup_db):
+    async with TestSession() as session:
+        tenant, user, pos, cand = await _make_tenant_pos_cand(
+            session, tenant_name="Weights", skills_weight=60, exp_weight=25, edu_weight=15)
+        cand_id = str(cand.id)
     captured = []
     def capture(**kw):
         captured.append(kw.get("messages", [{}])[0].get("content", ""))
         return _make_claude_response(MOCK_CV_PARSED)
-    with patch("anthropic.Anthropic") as mc:
-        inst = MagicMock()
-        inst.messages.create = MagicMock(side_effect=capture)
-        mc.return_value = inst
-        with patch("app.services.storage.download_file", return_value=b"%PDF"):
-            with patch("app.workers.cv_processing.parse_pdf", return_value=MOCK_CV_PARSED):
-                from app.workers.cv_processing import process_cv
-                process_cv(str(cand.id))
+    with patch("app.workers.cv_processing.get_sync_session", TestSyncSession):
+        with patch("anthropic.Anthropic") as mc:
+            inst = MagicMock()
+            inst.messages.create = MagicMock(side_effect=capture)
+            mc.return_value = inst
+            with patch("app.services.storage.download_file", return_value=b"%PDF"):
+                with patch("app.workers.cv_processing.parse_pdf", return_value=MOCK_CV_PARSED):
+                    from app.workers.cv_processing import process_cv
+                    process_cv(cand_id)
     assert any("60" in p for p in captured), "Tenant weight 60 not in prompt"
 
 
@@ -156,76 +156,97 @@ async def test_anti_keyword_stuffing():
 # ─── 5. Auto-reject below threshold ────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_auto_reject_below_threshold(db_session):
-    _, _, pos, cand = await _make_tenant_pos_cand(db_session, tenant_name="Reject", auto_reject=40, auto_advance=80)
+async def test_auto_reject_below_threshold(_setup_db):
+    async with TestSession() as session:
+        _, _, pos, cand = await _make_tenant_pos_cand(session, tenant_name="Reject", auto_reject=40, auto_advance=80)
+        cand_id = cand.id
     low = {"score": 25, "explanation": {"skills_match": {"score": 20, "matched": [], "missing": ["Python"], "justification": "."}, "experience_match": {"score": 25, "justification": "."}, "education_match": {"score": 30, "justification": "."}}}
     with _patch_cv_processing(low):
         from app.workers.cv_processing import process_cv
-        process_cv(str(cand.id))
-    await db_session.refresh(cand)
-    assert cand.pipeline_status == "rejected"
-    assert cand.cv_score == 25
+        process_cv(str(cand_id))
+    async with TestSession() as session:
+        from app.models.candidate import Candidate
+        refreshed = await session.get(Candidate, cand_id)
+        assert refreshed.pipeline_status == "rejected"
+        assert refreshed.cv_score == 25
 
 
 # ─── 6. Auto-advance above threshold ───────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_auto_advance_above_threshold(db_session):
-    _, _, pos, cand = await _make_tenant_pos_cand(db_session, tenant_name="Advance", auto_reject=30, auto_advance=75)
+async def test_auto_advance_above_threshold(_setup_db):
+    async with TestSession() as session:
+        _, _, pos, cand = await _make_tenant_pos_cand(session, tenant_name="Advance", auto_reject=30, auto_advance=75)
+        cand_id = cand.id
     high = {"score": 88, "explanation": {"skills_match": {"score": 90, "matched": ["Python"], "missing": [], "justification": "."}, "experience_match": {"score": 85, "justification": "."}, "education_match": {"score": 80, "justification": "."}}}
     with _patch_cv_processing(high):
         from app.workers.cv_processing import process_cv
-        process_cv(str(cand.id))
-    await db_session.refresh(cand)
-    assert cand.pipeline_status == "invited"
-    assert cand.cv_score == 88
+        process_cv(str(cand_id))
+    async with TestSession() as session:
+        from app.models.candidate import Candidate
+        refreshed = await session.get(Candidate, cand_id)
+        assert refreshed.pipeline_status == "invited"
+        assert refreshed.cv_score == 88
 
 
 # ─── 7. Borderline score = cv_analyzed ──────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_borderline_score_cv_analyzed(db_session):
-    _, _, pos, cand = await _make_tenant_pos_cand(db_session, tenant_name="Border", auto_reject=30, auto_advance=80)
+async def test_borderline_score_cv_analyzed(_setup_db):
+    async with TestSession() as session:
+        _, _, pos, cand = await _make_tenant_pos_cand(session, tenant_name="Border", auto_reject=30, auto_advance=80)
+        cand_id = cand.id
     border = {"score": 30, "explanation": {"skills_match": {"score": 30, "matched": [], "missing": [], "justification": "."}, "experience_match": {"score": 30, "justification": "."}, "education_match": {"score": 30, "justification": "."}}}
     with _patch_cv_processing(border):
         from app.workers.cv_processing import process_cv
-        process_cv(str(cand.id))
-    await db_session.refresh(cand)
-    assert cand.pipeline_status == "cv_analyzed"
+        process_cv(str(cand_id))
+    async with TestSession() as session:
+        from app.models.candidate import Candidate
+        refreshed = await session.get(Candidate, cand_id)
+        assert refreshed.pipeline_status == "cv_analyzed"
 
 
 # ─── 8. Missing CV skip ────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_scoring_with_missing_cv(db_session):
-    _, _, pos, cand = await _make_tenant_pos_cand(db_session, tenant_name="NoCv", cv_path=None)
-    # Override cv_file_path to None
-    cand.cv_file_path = None
-    await db_session.commit()
-    with patch("anthropic.Anthropic") as mc:
-        inst = MagicMock()
-        mc.return_value = inst
-        from app.workers.cv_processing import process_cv
-        process_cv(str(cand.id))
-        inst.messages.create.assert_not_called()
-    await db_session.refresh(cand)
-    assert cand.pipeline_status == "new"
-    assert cand.cv_score is None
+async def test_scoring_with_missing_cv(_setup_db):
+    async with TestSession() as session:
+        _, _, pos, cand = await _make_tenant_pos_cand(session, tenant_name="NoCv", cv_path=None)
+        # Override cv_file_path to None
+        cand.cv_file_path = None
+        await session.commit()
+        cand_id = cand.id
+    with patch("app.workers.cv_processing.get_sync_session", TestSyncSession):
+        with patch("anthropic.Anthropic") as mc:
+            inst = MagicMock()
+            mc.return_value = inst
+            from app.workers.cv_processing import process_cv
+            process_cv(str(cand_id))
+            inst.messages.create.assert_not_called()
+    async with TestSession() as session:
+        from app.models.candidate import Candidate
+        refreshed = await session.get(Candidate, cand_id)
+        assert refreshed.pipeline_status == "new"
+        assert refreshed.cv_score is None
 
 
 # ─── 9. Reprocess CV endpoint ──────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_reprocess_cv_endpoint(client, admin_data, db_session):
-    headers, user, tenant = admin_data
-    cand = await _inject_candidate(db_session, tenant.id, name="Reprocess", cv_file_path="cvs/f.pdf", cv_parsed_data=MOCK_CV_PARSED)
+async def test_reprocess_cv_endpoint(client, _setup_db):
+    async with TestSession() as session:
+        headers, user, tenant = await _create_user(session, "admin@test.com", "admin")
+        cand = await _inject_candidate(session, tenant.id, name="Reprocess", cv_file_path="cvs/f.pdf", cv_parsed_data=MOCK_CV_PARSED)
+        await session.commit()
+        cand_id = cand.id
     with patch("app.workers.cv_processing.process_cv.delay"):
-        res = await client.post(f"/api/v1/candidates/{cand.id}/reprocess-cv", headers=headers)
+        res = await client.post(f"/api/v1/candidates/{cand_id}/reprocess-cv", headers=headers)
     assert res.status_code == 200
 
 @pytest.mark.asyncio
-async def test_reprocess_cv_not_found(client, admin_data):
-    headers, _, _ = admin_data
+async def test_reprocess_cv_not_found(client, _setup_db):
+    async with TestSession() as session:
+        headers, _, _ = await _create_user(session, "admin@test.com", "admin")
     res = await client.post(f"/api/v1/candidates/{uuid.uuid4()}/reprocess-cv", headers=headers)
     assert res.status_code == 404
 
@@ -233,20 +254,26 @@ async def test_reprocess_cv_not_found(client, admin_data):
 # ─── 10-11. Competence dossier PDF + DOCX ──────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_competence_dossier_pdf(client, admin_data, db_session):
-    headers, user, tenant = admin_data
-    cand = await _inject_candidate(db_session, tenant.id, name="DossierPDF", cv_parsed_data=MOCK_CV_PARSED)
+async def test_competence_dossier_pdf(client, _setup_db):
+    async with TestSession() as session:
+        headers, user, tenant = await _create_user(session, "admin@test.com", "admin")
+        cand = await _inject_candidate(session, tenant.id, name="DossierPDF", cv_parsed_data=MOCK_CV_PARSED)
+        await session.commit()
+        cand_id = cand.id
     with patch("app.services.competence_dossier.generate_dossier_pdf", return_value=b"%PDF-fake"):
-        res = await client.get(f"/api/v1/candidates/{cand.id}/competence-dossier?format=pdf", headers=headers)
+        res = await client.get(f"/api/v1/candidates/{cand_id}/competence-dossier?format=pdf", headers=headers)
     assert res.status_code == 200
     assert ".pdf" in res.headers.get("content-disposition", "")
 
 @pytest.mark.asyncio
-async def test_competence_dossier_docx(client, admin_data, db_session):
-    headers, user, tenant = admin_data
-    cand = await _inject_candidate(db_session, tenant.id, name="DossierDOCX", cv_parsed_data=MOCK_CV_PARSED)
+async def test_competence_dossier_docx(client, _setup_db):
+    async with TestSession() as session:
+        headers, user, tenant = await _create_user(session, "admin@test.com", "admin")
+        cand = await _inject_candidate(session, tenant.id, name="DossierDOCX", cv_parsed_data=MOCK_CV_PARSED)
+        await session.commit()
+        cand_id = cand.id
     with patch("app.services.competence_dossier.generate_dossier_docx", return_value=b"PK\x03\x04fake"):
-        res = await client.get(f"/api/v1/candidates/{cand.id}/competence-dossier?format=docx", headers=headers)
+        res = await client.get(f"/api/v1/candidates/{cand_id}/competence-dossier?format=docx", headers=headers)
     assert res.status_code == 200
     assert ".docx" in res.headers.get("content-disposition", "")
 
@@ -254,41 +281,56 @@ async def test_competence_dossier_docx(client, admin_data, db_session):
 # ─── 12. Competence dossier errors ──────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_competence_dossier_no_data(client, admin_data, db_session):
-    headers, user, tenant = admin_data
-    cand = await _inject_candidate(db_session, tenant.id, name="NoData", cv_parsed_data=None)
-    res = await client.get(f"/api/v1/candidates/{cand.id}/competence-dossier?format=pdf", headers=headers)
+async def test_competence_dossier_no_data(client, _setup_db):
+    async with TestSession() as session:
+        headers, user, tenant = await _create_user(session, "admin@test.com", "admin")
+        cand = await _inject_candidate(session, tenant.id, name="NoData", cv_parsed_data=None)
+        await session.commit()
+        cand_id = cand.id
+    res = await client.get(f"/api/v1/candidates/{cand_id}/competence-dossier?format=pdf", headers=headers)
     assert res.status_code == 400
 
 @pytest.mark.asyncio
-async def test_competence_dossier_parse_error(client, admin_data, db_session):
-    headers, user, tenant = admin_data
-    cand = await _inject_candidate(db_session, tenant.id, name="ParseErr", cv_parsed_data={"parse_error": True})
-    res = await client.get(f"/api/v1/candidates/{cand.id}/competence-dossier?format=pdf", headers=headers)
+async def test_competence_dossier_parse_error(client, _setup_db):
+    async with TestSession() as session:
+        headers, user, tenant = await _create_user(session, "admin@test.com", "admin")
+        cand = await _inject_candidate(session, tenant.id, name="ParseErr", cv_parsed_data={"parse_error": True})
+        await session.commit()
+        cand_id = cand.id
+    res = await client.get(f"/api/v1/candidates/{cand_id}/competence-dossier?format=pdf", headers=headers)
     assert res.status_code == 400
 
 @pytest.mark.asyncio
-async def test_competence_dossier_invalid_format(client, admin_data, db_session):
-    headers, user, tenant = admin_data
-    cand = await _inject_candidate(db_session, tenant.id, name="BadFmt", cv_parsed_data=MOCK_CV_PARSED)
-    res = await client.get(f"/api/v1/candidates/{cand.id}/competence-dossier?format=xlsx", headers=headers)
+async def test_competence_dossier_invalid_format(client, _setup_db):
+    async with TestSession() as session:
+        headers, user, tenant = await _create_user(session, "admin@test.com", "admin")
+        cand = await _inject_candidate(session, tenant.id, name="BadFmt", cv_parsed_data=MOCK_CV_PARSED)
+        await session.commit()
+        cand_id = cand.id
+    res = await client.get(f"/api/v1/candidates/{cand_id}/competence-dossier?format=xlsx", headers=headers)
     assert res.status_code == 400
 
 
 # ─── 13. Export profile fallback ────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_export_profile_fallback(client, admin_data, db_session):
-    headers, user, tenant = admin_data
-    cand = await _inject_candidate(db_session, tenant.id, name="ExportFB", cv_parsed_data=MOCK_CV_PARSED)
-    res = await client.get(f"/api/v1/candidates/{cand.id}/profile/export", headers=headers)
+async def test_export_profile_fallback(client, _setup_db):
+    async with TestSession() as session:
+        headers, user, tenant = await _create_user(session, "admin@test.com", "admin")
+        cand = await _inject_candidate(session, tenant.id, name="ExportFB", cv_parsed_data=MOCK_CV_PARSED)
+        await session.commit()
+        cand_id = cand.id
+    res = await client.get(f"/api/v1/candidates/{cand_id}/profile/export", headers=headers)
     assert res.status_code == 200
 
 @pytest.mark.asyncio
-async def test_export_profile_no_data(client, admin_data, db_session):
-    headers, user, tenant = admin_data
-    cand = await _inject_candidate(db_session, tenant.id, name="ExportNone", cv_parsed_data=None)
-    res = await client.get(f"/api/v1/candidates/{cand.id}/profile/export", headers=headers)
+async def test_export_profile_no_data(client, _setup_db):
+    async with TestSession() as session:
+        headers, user, tenant = await _create_user(session, "admin@test.com", "admin")
+        cand = await _inject_candidate(session, tenant.id, name="ExportNone", cv_parsed_data=None)
+        await session.commit()
+        cand_id = cand.id
+    res = await client.get(f"/api/v1/candidates/{cand_id}/profile/export", headers=headers)
     assert res.status_code == 400
 
 
