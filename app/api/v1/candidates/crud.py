@@ -721,12 +721,29 @@ async def delete_candidate(
         details={"name": candidate.name, "email": candidate.email},
     )
 
+    # Collect file paths to delete from storage
+    storage_paths = []
+    if candidate.cv_file_path:
+        storage_paths.append(candidate.cv_file_path)
+
     interview_ids_result = await db.execute(
-        select(Interview.id).where(Interview.candidate_id == candidate_id)
+        select(Interview).where(Interview.candidate_id == candidate_id)
     )
-    interview_ids = [row[0] for row in interview_ids_result.all()]
+    interviews = interview_ids_result.scalars().all()
+    interview_ids = [i.id for i in interviews]
+    for interview in interviews:
+        if getattr(interview, "audio_path", None):
+            storage_paths.append(interview.audio_path)
 
     if interview_ids:
+        # Collect report PDF paths
+        report_result = await db.execute(
+            select(Report).where(Report.interview_id.in_(interview_ids))
+        )
+        for report in report_result.scalars().all():
+            if getattr(report, "pdf_path", None):
+                storage_paths.append(report.pdf_path)
+
         await db.execute(delete(Report).where(Report.interview_id.in_(interview_ids)))
         await db.execute(delete(Transcription).where(Transcription.interview_id.in_(interview_ids)))
         await db.execute(delete(Analysis).where(Analysis.interview_id.in_(interview_ids)))
@@ -740,6 +757,23 @@ async def delete_candidate(
 
     await db.execute(delete(Candidate).where(Candidate.id == candidate_id))
     await db.commit()
+
+    # Delete files from storage (after commit, non-blocking)
+    if storage_paths:
+        import asyncio as _asyncio
+        async def _cleanup_storage():
+            try:
+                from app.services.storage import s3_client
+                for path in storage_paths:
+                    parts = path.split("/", 1)
+                    if len(parts) == 2:
+                        try:
+                            s3_client.remove_object(parts[0], parts[1])
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+        _asyncio.create_task(_cleanup_storage())
 
 
 @router.post("/candidates/bulk-delete", status_code=status.HTTP_200_OK)
