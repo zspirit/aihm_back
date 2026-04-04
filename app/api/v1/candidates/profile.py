@@ -613,7 +613,7 @@ async def update_candidate_summary(
         if key in allowed_fields:
             current[key] = value
     candidate.summary_json = current
-    await db.flush()
+    await db.commit()
     return {"status": "ok"}
 
 
@@ -689,7 +689,7 @@ async def _generate_and_store_summary(candidate, current_user, db) -> dict:
 
     # Stocker en BD
     candidate.summary_json = summary
-    await db.flush()
+    await db.commit()
     return summary
 
 
