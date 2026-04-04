@@ -49,32 +49,73 @@ def process_cv(self, candidate_id: str, position_id: str | None = None, bulk_imp
             "education": tenant.scoring_education_weight if tenant else 20,
         }
 
-        # Score CV
+        # Step 1: ALWAYS compute profile_score (intrinsic CV quality)
+        quality_result = score_cv_quality(parsed_data)
+        candidate.profile_score = quality_result["score"]
+        candidate.profile_score_explanation = quality_result.get("explanation")
+        logger.info("profile_score_computed", candidate_id=candidate_id, score=quality_result["score"])
+
+        # Step 2: Score against positions via Applications
+        from app.models.application import Application
+        applications = session.query(Application).filter(
+            Application.candidate_id == candidate.id
+        ).all()
+
         auto_advanced = False
-        if position:
-            # Score against specific position
+        if applications:
+            # Score CV against each position linked via Application
+            primary_score_set = False
+            for app in applications:
+                app_position = session.get(Position, app.position_id)
+                if not app_position:
+                    continue
+                score_result = score_cv(parsed_data, app_position, weights=scoring_weights)
+                app.match_score = score_result["score"]
+                app.match_score_explanation = score_result.get("explanation")
+                logger.info(
+                    "application_match_scored",
+                    candidate_id=candidate_id,
+                    position_id=str(app.position_id),
+                    score=score_result["score"],
+                )
+                # Set candidate.cv_score from the primary position (position_id) for compat
+                if app.position_id == candidate.position_id and not primary_score_set:
+                    candidate.cv_score = score_result["score"]
+                    candidate.cv_score_explanation = score_result.get("explanation")
+                    primary_score_set = True
+
+            # If no application matched the primary position_id, use first application score
+            if not primary_score_set and applications:
+                first_scored = next(
+                    (a for a in applications if a.match_score is not None), None
+                )
+                if first_scored:
+                    candidate.cv_score = first_scored.match_score
+                    candidate.cv_score_explanation = first_scored.match_score_explanation
+        elif position:
+            # Legacy path: position_id set but no Application rows — score directly
             score_result = score_cv(parsed_data, position, weights=scoring_weights)
             candidate.cv_score = score_result["score"]
-            candidate.cv_score_explanation = score_result["explanation"]
-            cv_score = score_result["score"]
+            candidate.cv_score_explanation = score_result.get("explanation")
+        else:
+            # Vivier: no position at all — cv_score = profile_score for compat
+            candidate.cv_score = quality_result["score"]
+            candidate.cv_score_explanation = quality_result.get("explanation")
 
-            # Workflow automation
-            if position.auto_reject_threshold is not None and cv_score < position.auto_reject_threshold:
+        # Step 3: Workflow automation (based on primary position)
+        cv_score = candidate.cv_score
+        if position:
+            if position.auto_reject_threshold is not None and cv_score is not None and cv_score < position.auto_reject_threshold:
                 candidate.pipeline_status = "rejected"
                 logger.info("auto_rejected", candidate_id=candidate_id, score=cv_score, threshold=position.auto_reject_threshold)
-            elif position.auto_advance_threshold is not None and cv_score >= position.auto_advance_threshold:
+            elif position.auto_advance_threshold is not None and cv_score is not None and cv_score >= position.auto_advance_threshold:
                 candidate.pipeline_status = "invited"
                 auto_advanced = True
                 logger.info("auto_advanced", candidate_id=candidate_id, score=cv_score, threshold=position.auto_advance_threshold)
             else:
                 candidate.pipeline_status = "cv_analyzed"
         else:
-            # Vivier: score CV quality (no position comparison)
-            quality_result = score_cv_quality(parsed_data)
-            candidate.cv_score = quality_result["score"]
-            candidate.cv_score_explanation = quality_result["explanation"]
             candidate.pipeline_status = "cv_analyzed"
-            logger.info("cv_quality_scored", candidate_id=candidate_id, score=quality_result["score"])
 
         session.commit()
         success = True

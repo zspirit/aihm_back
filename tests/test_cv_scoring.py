@@ -56,15 +56,30 @@ async def _make_tenant_pos_cand(session, *, tenant_name="T", auto_reject=None, a
     return tenant, user, pos, cand
 
 
-def _patch_cv_processing(score_response):
-    """Patch Claude + storage for process_cv tests."""
+def _patch_cv_processing(score_response, quality_response=None):
+    """Patch Claude + storage for process_cv tests.
+    Now process_cv always calls score_cv_quality first, then score_cv per position.
+    quality_response defaults to MOCK_CV_QUALITY if not provided.
+    score_response is used for the position scoring calls.
+    """
     from contextlib import contextmanager
+    _quality = quality_response or MOCK_CV_QUALITY
+
     @contextmanager
     def _ctx():
+        # First call = quality scoring, subsequent calls = position scoring
+        call_count = {"n": 0}
+        def _side_effect(**kw):
+            call_count["n"] += 1
+            content = kw.get("messages", [{}])[0].get("content", "")
+            if "qualite intrinseque" in content:
+                return _make_claude_response(_quality)
+            return _make_claude_response(score_response)
+
         with patch("app.workers.cv_processing.get_sync_session", TestSyncSession):
             with patch("anthropic.Anthropic") as mc:
                 inst = MagicMock()
-                inst.messages.create = MagicMock(return_value=_make_claude_response(score_response))
+                inst.messages.create = MagicMock(side_effect=_side_effect)
                 mc.return_value = inst
                 with patch("app.services.storage.download_file", return_value=b"%PDF fake"):
                     with patch("app.workers.cv_processing.parse_pdf", return_value=MOCK_CV_PARSED):
@@ -386,6 +401,8 @@ def test_vivier_full_pipeline():
     cand.cv_parsed_data = {}
     cand.cv_score = None
     cand.cv_score_explanation = None
+    cand.profile_score = None
+    cand.profile_score_explanation = None
     cand.pipeline_status = "new"
 
     tenant = MagicMock()
@@ -400,6 +417,8 @@ def test_vivier_full_pipeline():
         if name == "Tenant": return tenant
         return None
     sess.get.side_effect = _get
+    # Mock query().filter().all() for Application lookup — vivier has no applications
+    sess.query.return_value.filter.return_value.all.return_value = []
 
     with patch("app.workers.cv_processing.get_sync_session", return_value=sess), \
          patch("app.workers.cv_processing.parse_cv_file", return_value=MOCK_CV_PARSED), \
@@ -407,7 +426,8 @@ def test_vivier_full_pipeline():
         from app.workers.cv_processing import process_cv
         process_cv(str(cand.id))
     assert cand.pipeline_status == "cv_analyzed"
-    assert cand.cv_score == 68
+    assert cand.profile_score == 68
+    assert cand.cv_score == 68  # vivier: cv_score = profile_score for compat
 
 
 # ─── 16. Default weights ───────────────────────────────────────────────────
@@ -427,3 +447,123 @@ async def test_default_weights():
         score_cv(MOCK_CV_PARSED, pos, weights=None)
     prompt = captured[0]["messages"][0]["content"]
     assert "50" in prompt and "30" in prompt and "20" in prompt
+
+
+# ─── 17. Double scoring: profile + position via Applications ──────────────
+
+@pytest.mark.asyncio
+async def test_double_scoring_with_applications(_setup_db):
+    """process_cv computes profile_score AND match_score per Application."""
+    from app.models.application import Application
+
+    async with TestSession() as session:
+        tenant, user, pos, cand = await _make_tenant_pos_cand(
+            session, tenant_name="DblScore")
+        # Create an Application linking candidate to position
+        app = Application(
+            tenant_id=tenant.id,
+            candidate_id=cand.id,
+            position_id=pos.id,
+            pipeline_status="new",
+        )
+        session.add(app)
+        await session.commit()
+        cand_id = cand.id
+        app_id = app.id
+
+    with _patch_cv_processing(MOCK_CV_SCORE):
+        from app.workers.cv_processing import process_cv
+        process_cv(str(cand_id))
+
+    async with TestSession() as session:
+        from app.models.candidate import Candidate
+        refreshed = await session.get(Candidate, cand_id)
+        assert refreshed.profile_score is not None, "profile_score should be set"
+        assert refreshed.profile_score == 68  # MOCK_CV_QUALITY score
+        assert refreshed.cv_score == 75  # MOCK_CV_SCORE from position scoring
+        assert refreshed.pipeline_status == "cv_analyzed"
+
+        refreshed_app = await session.get(Application, app_id)
+        assert refreshed_app.match_score == 75  # MOCK_CV_SCORE
+
+
+# ─── 18. Profile score always computed even with position ─────────────────
+
+@pytest.mark.asyncio
+async def test_profile_score_always_computed(_setup_db):
+    """profile_score is set even for candidates linked to a position (legacy path)."""
+    async with TestSession() as session:
+        _, _, pos, cand = await _make_tenant_pos_cand(
+            session, tenant_name="AlwaysProfile")
+        cand_id = cand.id
+
+    with _patch_cv_processing(MOCK_CV_SCORE):
+        from app.workers.cv_processing import process_cv
+        process_cv(str(cand_id))
+
+    async with TestSession() as session:
+        from app.models.candidate import Candidate
+        refreshed = await session.get(Candidate, cand_id)
+        assert refreshed.profile_score == 68  # Always computed
+        assert refreshed.cv_score == 75  # From position scoring (legacy path)
+
+
+# ─── 19. Multiple applications score each position ───────────────────────
+
+@pytest.mark.asyncio
+async def test_multi_position_scoring(_setup_db):
+    """When candidate has multiple Applications, each gets its own match_score."""
+    from app.models.application import Application
+    from app.models.position import Position as PositionModel
+    from app.core.security import hash_password
+
+    async with TestSession() as session:
+        from app.models.tenant import Tenant
+        from app.models.user import User
+
+        tenant = Tenant(name="MultiPos", scoring_skills_weight=50,
+                        scoring_experience_weight=30, scoring_education_weight=20)
+        session.add(tenant)
+        await session.flush()
+        user = User(tenant_id=tenant.id, email="multi@t.com",
+                    password_hash=hash_password("p"), full_name="U", role="admin")
+        session.add(user)
+        await session.flush()
+
+        pos1 = PositionModel(tenant_id=tenant.id, title="Dev Python",
+                             description="Backend", required_skills=["Python"],
+                             seniority_level="mid", created_by=user.id)
+        pos2 = PositionModel(tenant_id=tenant.id, title="Dev React",
+                             description="Frontend", required_skills=["React"],
+                             seniority_level="mid", created_by=user.id)
+        session.add_all([pos1, pos2])
+        await session.flush()
+
+        from app.models.candidate import Candidate
+        cand = Candidate(tenant_id=tenant.id, position_id=pos1.id,
+                         name="MultiApp", email="multi@c.com",
+                         cv_file_path="cvs/multi.pdf")
+        session.add(cand)
+        await session.flush()
+
+        app1 = Application(tenant_id=tenant.id, candidate_id=cand.id,
+                           position_id=pos1.id, pipeline_status="new")
+        app2 = Application(tenant_id=tenant.id, candidate_id=cand.id,
+                           position_id=pos2.id, pipeline_status="new")
+        session.add_all([app1, app2])
+        await session.commit()
+        cand_id, app1_id, app2_id = cand.id, app1.id, app2.id
+
+    with _patch_cv_processing(MOCK_CV_SCORE):
+        from app.workers.cv_processing import process_cv
+        process_cv(str(cand_id))
+
+    async with TestSession() as session:
+        refreshed_app1 = await session.get(Application, app1_id)
+        refreshed_app2 = await session.get(Application, app2_id)
+        assert refreshed_app1.match_score == 75
+        assert refreshed_app2.match_score == 75
+        from app.models.candidate import Candidate
+        refreshed = await session.get(Candidate, cand_id)
+        assert refreshed.profile_score == 68
+        assert refreshed.cv_score == 75  # primary position score

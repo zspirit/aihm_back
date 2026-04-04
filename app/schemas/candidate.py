@@ -47,6 +47,7 @@ class CandidateListResponse(BaseModel):
     email: str | None
     phone: str | None
     cv_score: float | None
+    profile_score: float | None = None
     pipeline_status: str
     interview_count: int = 0
     created_at: datetime

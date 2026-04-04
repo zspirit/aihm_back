@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.database import async_session, get_db
 from app.core.dependencies import get_tenant_id, require_role
+from app.models.application import Application
 from app.models.bulk_import import BulkImport
 from app.models.candidate import Candidate
 from app.models.position import Position
@@ -281,25 +282,41 @@ async def _collect_entries(files: List[UploadFile]) -> list[tuple[str, bytes]]:
 async def import_bulk_preview(
     files: List[UploadFile] = File(...),
     position_id: Optional[str] = Form(None),
+    position_ids: Optional[str] = Form(None),
     auto_score: bool = Form(True),
     current_user: User = Depends(require_role("admin", "recruiter")),
     db: AsyncSession = Depends(get_db),
 ):
     """Etape 1 : upload des fichiers, detection doublons, retourne la preview sans creer de candidats."""
-    pos_uuid: Optional[UUID] = None
-    if position_id:
+    # Parse position_ids (comma-separated) or fallback to position_id
+    pos_uuids: list[UUID] = []
+    if position_ids:
+        for pid in position_ids.split(","):
+            pid = pid.strip()
+            if not pid:
+                continue
+            try:
+                pos_uuids.append(UUID(pid))
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"position_id invalide: {pid}")
+    elif position_id:
         try:
-            pos_uuid = UUID(position_id)
+            pos_uuids.append(UUID(position_id))
         except ValueError:
             raise HTTPException(status_code=400, detail="position_id invalide")
+
+    # Validate all positions exist
+    for pu in pos_uuids:
         result = await db.execute(
             select(Position).where(
-                Position.id == pos_uuid,
+                Position.id == pu,
                 Position.tenant_id == current_user.tenant_id,
             )
         )
         if not result.scalar_one_or_none():
-            raise HTTPException(status_code=404, detail="Poste introuvable")
+            raise HTTPException(status_code=404, detail=f"Poste introuvable: {pu}")
+
+    pos_uuid: Optional[UUID] = pos_uuids[0] if pos_uuids else None
 
     entries = await _collect_entries(files)
 
@@ -435,6 +452,7 @@ async def import_bulk_preview(
             "files": metadata_files,
             "auto_score": auto_score,
             "position_id": str(pos_uuid) if pos_uuid else None,
+            "position_ids": [str(pu) for pu in pos_uuids] if pos_uuids else [],
         },
     )
     db.add(bulk_import)
@@ -483,6 +501,9 @@ async def import_bulk_confirm(
     auto_score: bool = metadata.get("auto_score", True)
     pos_id_str: Optional[str] = metadata.get("position_id")
     pos_uuid: Optional[UUID] = UUID(pos_id_str) if pos_id_str else None
+    # Multi-position support
+    pos_ids_strs: list[str] = metadata.get("position_ids", [])
+    pos_uuids: list[UUID] = [UUID(p) for p in pos_ids_strs if p]
 
     # Index decisions by file index
     decisions_map: dict[int, str] = {d.index: d.action for d in body.decisions}
@@ -543,13 +564,23 @@ async def import_bulk_confirm(
                 # action == "import" — create new candidate (position_id nullable = vivier OK)
                 candidate = Candidate(
                     tenant_id=current_user.tenant_id,
-                    position_id=pos_uuid,  # may be None for vivier
+                    position_id=pos_uuid,  # first position for compat, may be None
                     name=candidate_name,
                     cv_file_path=file_path,
                     cv_parsed_data={"file_hash": file_hash, "original_filename": filename},
                     pipeline_status="new",
                 )
                 db.add(candidate)
+                await db.flush()
+                # Create Application rows for each position
+                for pu in pos_uuids:
+                    application = Application(
+                        tenant_id=current_user.tenant_id,
+                        candidate_id=candidate.id,
+                        position_id=pu,
+                        pipeline_status="new",
+                    )
+                    db.add(application)
                 await db.flush()
                 celery_ids.append(str(candidate.id))
                 imported_count += 1
@@ -633,25 +664,41 @@ async def import_bulk_confirm(
 async def import_bulk_cvs(
     files: List[UploadFile] = File(...),
     position_id: Optional[str] = Form(None),
+    position_ids: Optional[str] = Form(None),
     auto_score: bool = Form(True),
     current_user: User = Depends(require_role("admin", "recruiter")),
     db: AsyncSession = Depends(get_db),
 ):
     """Import massif de CVs (PDF, DOCX, ZIP). Sans position_id = vivier de talents."""
-    pos_uuid: Optional[UUID] = None
-    if position_id:
+    # Parse position_ids (comma-separated) or fallback to position_id
+    pos_uuids: list[UUID] = []
+    if position_ids:
+        for pid in position_ids.split(","):
+            pid = pid.strip()
+            if not pid:
+                continue
+            try:
+                pos_uuids.append(UUID(pid))
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"position_id invalide: {pid}")
+    elif position_id:
         try:
-            pos_uuid = UUID(position_id)
+            pos_uuids.append(UUID(position_id))
         except ValueError:
             raise HTTPException(status_code=400, detail="position_id invalide")
+
+    # Validate all positions exist
+    for pu in pos_uuids:
         result = await db.execute(
             select(Position).where(
-                Position.id == pos_uuid,
+                Position.id == pu,
                 Position.tenant_id == current_user.tenant_id,
             )
         )
         if not result.scalar_one_or_none():
-            raise HTTPException(status_code=404, detail="Poste introuvable")
+            raise HTTPException(status_code=404, detail=f"Poste introuvable: {pu}")
+
+    pos_uuid: Optional[UUID] = pos_uuids[0] if pos_uuids else None
 
     entries = await _collect_entries(files)
 
