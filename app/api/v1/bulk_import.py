@@ -288,7 +288,6 @@ async def import_bulk_preview(
     db: AsyncSession = Depends(get_db),
 ):
     """Etape 1 : upload des fichiers, detection doublons, retourne la preview sans creer de candidats."""
-    logger.info("import_bulk_preview", position_id=position_id, position_ids=position_ids, auto_score=auto_score, file_count=len(files))
     # Parse position_ids (comma-separated) or fallback to position_id
     pos_uuids: list[UUID] = []
     if position_ids:
