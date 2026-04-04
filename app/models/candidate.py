@@ -43,6 +43,9 @@ class Candidate(Base):
     tags: Mapped[list | None] = mapped_column(JSONB, nullable=True, default=list)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Resume IA (cache)
+    summary_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
     # Feedback candidat
     feedback_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     feedback_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
