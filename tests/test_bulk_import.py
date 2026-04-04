@@ -12,6 +12,9 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
+import pytest_asyncio
+
+from tests.conftest import _create_user, TestSession
 
 
 # ---------------------------------------------------------------------------
@@ -49,6 +52,20 @@ def mock_celery_bulk():
     with patch("app.workers.cv_processing.process_cv.delay", MagicMock(return_value=None)), \
          patch("app.workers.bulk_import.process_bulk_cv_import.delay", MagicMock(return_value=None)):
         yield
+
+
+@pytest_asyncio.fixture()
+async def auth_headers(_setup_db):
+    async with TestSession() as session:
+        headers, _, _ = await _create_user(session, "admin@test.com", "admin")
+    return headers
+
+
+@pytest_asyncio.fixture()
+async def viewer_headers(_setup_db):
+    async with TestSession() as session:
+        headers, _, _ = await _create_user(session, "viewer@test.com", "viewer", "Viewer Corp")
+    return headers
 
 
 async def _create_position(client, auth_headers) -> str:
@@ -248,56 +265,58 @@ async def test_list_recent_imports(client, auth_headers, mock_s3):
 
 
 @pytest.mark.asyncio
-async def test_recent_stuck_cleanup(client, auth_headers, db_session):
+async def test_recent_stuck_cleanup(client, auth_headers):
     from sqlalchemy import select as sa_select
     from app.models.bulk_import import BulkImport
     from app.models.tenant import Tenant
     from app.models.user import User
 
-    tenant = (await db_session.execute(sa_select(Tenant).limit(1))).scalars().first()
-    user = (await db_session.execute(sa_select(User).limit(1))).scalars().first()
-    if not tenant or not user:
-        pytest.skip("No tenant/user")
+    # Find tenant/user created by auth_headers fixture
+    async with TestSession() as session:
+        tenant = (await session.execute(sa_select(Tenant).limit(1))).scalars().first()
+        user = (await session.execute(sa_select(User).limit(1))).scalars().first()
+        if not tenant or not user:
+            pytest.skip("No tenant/user")
 
-    stuck = BulkImport(
-        tenant_id=tenant.id, user_id=user.id, filename="stuck.pdf", file_path="bulk",
-        total_count=5, processed_count=0, status="pending", source_type="files",
-        created_at=datetime.now(timezone.utc) - timedelta(minutes=45),
-    )
-    db_session.add(stuck)
-    await db_session.commit()
-    stuck_id = str(stuck.id)
+        stuck = BulkImport(
+            tenant_id=tenant.id, user_id=user.id, filename="stuck.pdf", file_path="bulk",
+            total_count=5, processed_count=0, status="pending", source_type="files",
+            created_at=datetime.now(timezone.utc) - timedelta(minutes=45),
+        )
+        session.add(stuck)
+        await session.commit()
+        stuck_id = str(stuck.id)
 
     await client.get(RECENT_URL, headers=auth_headers)
 
-    # Expire cached state to see changes from client's session
-    db_session.expire_all()
-    result = await db_session.execute(sa_select(BulkImport).where(BulkImport.id == uuid.UUID(stuck_id)))
-    updated = result.scalar_one_or_none()
-    assert updated.status == "failed"
+    async with TestSession() as session:
+        result = await session.execute(sa_select(BulkImport).where(BulkImport.id == uuid.UUID(stuck_id)))
+        updated = result.scalar_one_or_none()
+        assert updated.status == "failed"
 
 
 @pytest.mark.asyncio
-async def test_recent_time_filter(client, auth_headers, db_session):
+async def test_recent_time_filter(client, auth_headers):
     from sqlalchemy import select as sa_select
     from app.models.bulk_import import BulkImport
     from app.models.tenant import Tenant
     from app.models.user import User
 
-    tenant = (await db_session.execute(sa_select(Tenant).limit(1))).scalars().first()
-    user = (await db_session.execute(sa_select(User).limit(1))).scalars().first()
-    if not tenant or not user:
-        pytest.skip("No tenant/user")
+    async with TestSession() as session:
+        tenant = (await session.execute(sa_select(Tenant).limit(1))).scalars().first()
+        user = (await session.execute(sa_select(User).limit(1))).scalars().first()
+        if not tenant or not user:
+            pytest.skip("No tenant/user")
 
-    old = BulkImport(
-        tenant_id=tenant.id, user_id=user.id, filename="old.pdf", file_path="bulk",
-        total_count=2, processed_count=2, status="completed", source_type="files",
-        created_at=datetime.now(timezone.utc) - timedelta(minutes=60),
-        completed_at=datetime.now(timezone.utc) - timedelta(minutes=59),
-    )
-    db_session.add(old)
-    await db_session.commit()
-    old_id = str(old.id)
+        old = BulkImport(
+            tenant_id=tenant.id, user_id=user.id, filename="old.pdf", file_path="bulk",
+            total_count=2, processed_count=2, status="completed", source_type="files",
+            created_at=datetime.now(timezone.utc) - timedelta(minutes=60),
+            completed_at=datetime.now(timezone.utc) - timedelta(minutes=59),
+        )
+        session.add(old)
+        await session.commit()
+        old_id = str(old.id)
 
     resp = await client.get(RECENT_URL, headers=auth_headers)
     returned_ids = [item["id"] for item in resp.json()]
@@ -332,7 +351,7 @@ async def test_legacy_invalid_format(client, auth_headers):
 
 
 @pytest.mark.asyncio
-async def test_preview_requires_auth(client):
+async def test_preview_requires_auth(client, _setup_db):
     resp = await client.post(PREVIEW_URL, files=[pdf_file()])
     assert resp.status_code in (401, 403)
 
@@ -344,6 +363,6 @@ async def test_preview_viewer_forbidden(client, viewer_headers, mock_s3):
 
 
 @pytest.mark.asyncio
-async def test_recent_requires_auth(client):
+async def test_recent_requires_auth(client, _setup_db):
     resp = await client.get(RECENT_URL)
     assert resp.status_code in (401, 403)

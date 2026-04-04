@@ -3,6 +3,8 @@ import json
 import structlog
 from celery import shared_task
 
+from app.workers.base import worker_task
+
 logger = structlog.get_logger()
 
 _whisper_model = None
@@ -32,17 +34,13 @@ def get_whisper_model():
 
 @shared_task(name="transcription.transcribe", bind=True, max_retries=3)
 def transcribe_audio(self, interview_id: str):
-    logger.info("transcription_start", interview_id=interview_id)
-
-    from app.workers.cv_processing import get_sync_session
-
-    session = get_sync_session()
-    try:
+    with worker_task("transcription", self, interview_id=interview_id) as ctx:
         from uuid import UUID
 
         from app.models.interview import Interview
         from app.models.transcription import Transcription
 
+        session = ctx.session
         interview = session.get(Interview, UUID(interview_id))
         if not interview or not interview.audio_file_path:
             logger.warning("transcription_skip", interview_id=interview_id)
@@ -76,13 +74,6 @@ def transcribe_audio(self, interview_id: str):
         from app.workers.analysis import analyze_interview
 
         analyze_interview.delay(interview_id)
-
-    except Exception as e:
-        session.rollback()
-        logger.error("transcription_error", interview_id=interview_id, error=str(e))
-        raise self.retry(exc=e, countdown=30)
-    finally:
-        session.close()
 
 
 def transcribe_with_whisper(audio_data: bytes) -> dict:

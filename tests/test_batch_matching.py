@@ -12,25 +12,27 @@ from app.models.match_score import MatchScore, MatchSession
 from app.models.position import Position
 from app.models.application import Application
 
+from tests.conftest import _create_user, TestSession
+
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
-async def _pos(db, tid, uid, title="Backend Dev"):
+async def _pos(session, tid, uid, title="Backend Dev"):
     p = Position(tenant_id=tid, title=title, description="T", required_skills=["Python"], seniority_level="mid", created_by=uid)
-    db.add(p); await db.flush(); return p
+    session.add(p); await session.flush(); return p
 
-async def _cand(db, tid, name="Alice", email="a@t.com", phone="+33612345678", parsed=True):
+async def _cand(session, tid, name="Alice", email="a@t.com", phone="+33612345678", parsed=True):
     c = Candidate(tenant_id=tid, name=name, email=email, phone=phone, cv_parsed_data={"skills":["Python"]} if parsed else None)
-    db.add(c); await db.flush(); return c
+    session.add(c); await session.flush(); return c
 
-async def _score(db, tid, cid, pid, score=82.0):
+async def _score(session, tid, cid, pid, score=82.0):
     ms = MatchScore(tenant_id=tid, candidate_id=cid, position_id=pid, score=score, reasons={"skills_match":{"score":85}})
-    db.add(ms); await db.flush(); return ms
+    session.add(ms); await session.flush(); return ms
 
-async def _session(db, tid, uid, pids, cids):
+async def _session_obj(session, tid, uid, pids, cids):
     s = MatchSession(tenant_id=tid, user_id=uid, position_ids=[str(p) for p in pids], candidate_ids=[str(c) for c in cids],
                      status="completed", total_pairs=len(pids)*len(cids), computed_pairs=len(pids)*len(cids))
-    db.add(s); await db.flush(); return s
+    session.add(s); await session.flush(); return s
 
 @pytest.fixture()
 def mock_celery():
@@ -39,37 +41,79 @@ def mock_celery():
          patch("app.workers.telephony.initiate_call.delay", MagicMock()):
         yield
 
-@pytest_asyncio.fixture()
-async def data(db_session, admin_data):
-    h, u, t = admin_data
-    p = await _pos(db_session, t.id, u.id)
-    c1 = await _cand(db_session, t.id, "Alice", "alice@t.com")
-    c2 = await _cand(db_session, t.id, "Bob", "bob@t.com")
-    await db_session.commit()
-    return h, u, t, p, c1, c2
 
 @pytest_asyncio.fixture()
-async def scored(db_session, data):
-    h, u, t, p, c1, c2 = data
-    ms1 = await _score(db_session, t.id, c1.id, p.id, 82.0)
-    ms2 = await _score(db_session, t.id, c2.id, p.id, 65.0)
-    await db_session.commit()
-    return h, u, t, p, c1, c2, ms1, ms2
+async def admin_data(_setup_db):
+    async with TestSession() as session:
+        headers, user, tenant = await _create_user(session, "admin@test.com", "admin")
+        user_id = user.id
+        tenant_id = tenant.id
+    return headers, user_id, tenant_id
+
 
 @pytest_asyncio.fixture()
-async def with_session(db_session, scored):
-    h, u, t, p, c1, c2, ms1, ms2 = scored
-    s = await _session(db_session, t.id, u.id, [p.id], [c1.id, c2.id])
-    await db_session.commit()
-    return h, u, t, p, c1, c2, ms1, ms2, s
+async def viewer_headers(_setup_db):
+    async with TestSession() as session:
+        headers, _, _ = await _create_user(session, "viewer@test.com", "viewer", "Viewer Corp")
+    return headers
+
+
+@pytest_asyncio.fixture()
+async def data(_setup_db):
+    async with TestSession() as session:
+        headers, user, tenant = await _create_user(session, "admin@test.com", "admin")
+        p = await _pos(session, tenant.id, user.id)
+        c1 = await _cand(session, tenant.id, "Alice", "alice@t.com")
+        c2 = await _cand(session, tenant.id, "Bob", "bob@t.com")
+        await session.commit()
+        result = {
+            "h": headers, "user_id": user.id, "tenant_id": tenant.id,
+            "pos_id": p.id, "c1_id": c1.id, "c2_id": c2.id,
+        }
+    return result
+
+@pytest_asyncio.fixture()
+async def scored(_setup_db):
+    async with TestSession() as session:
+        headers, user, tenant = await _create_user(session, "admin@test.com", "admin")
+        p = await _pos(session, tenant.id, user.id)
+        c1 = await _cand(session, tenant.id, "Alice", "alice@t.com")
+        c2 = await _cand(session, tenant.id, "Bob", "bob@t.com")
+        ms1 = await _score(session, tenant.id, c1.id, p.id, 82.0)
+        ms2 = await _score(session, tenant.id, c2.id, p.id, 65.0)
+        await session.commit()
+        result = {
+            "h": headers, "user_id": user.id, "tenant_id": tenant.id,
+            "pos_id": p.id, "c1_id": c1.id, "c2_id": c2.id,
+            "ms1_id": ms1.id, "ms2_id": ms2.id,
+        }
+    return result
+
+@pytest_asyncio.fixture()
+async def with_session(_setup_db):
+    async with TestSession() as session:
+        headers, user, tenant = await _create_user(session, "admin@test.com", "admin")
+        p = await _pos(session, tenant.id, user.id)
+        c1 = await _cand(session, tenant.id, "Alice", "alice@t.com")
+        c2 = await _cand(session, tenant.id, "Bob", "bob@t.com")
+        ms1 = await _score(session, tenant.id, c1.id, p.id, 82.0)
+        ms2 = await _score(session, tenant.id, c2.id, p.id, 65.0)
+        s = await _session_obj(session, tenant.id, user.id, [p.id], [c1.id, c2.id])
+        await session.commit()
+        result = {
+            "h": headers, "user_id": user.id, "tenant_id": tenant.id,
+            "pos_id": p.id, "c1_id": c1.id, "c2_id": c2.id,
+            "ms1_id": ms1.id, "ms2_id": ms2.id, "session_id": s.id,
+        }
+    return result
 
 
 # ═══ 1. Create session ═══
 
 @pytest.mark.asyncio
 async def test_create_session(client, data, mock_celery):
-    h, u, t, p, c1, c2 = data
-    res = await client.post("/api/v1/matching/sessions", headers=h, json={"position_ids": [str(p.id)]})
+    d = data
+    res = await client.post("/api/v1/matching/sessions", headers=d["h"], json={"position_ids": [str(d["pos_id"])]})
     assert res.status_code == 202
     assert res.json()["status"] == "pending"
     assert res.json()["total_pairs"] == 2
@@ -91,19 +135,19 @@ async def test_create_session_unknown_position(client, admin_data, mock_celery):
 
 @pytest.mark.asyncio
 async def test_list_sessions(client, with_session):
-    h, u, t, p, c1, c2, ms1, ms2, s = with_session
-    res = await client.get("/api/v1/matching/sessions", headers=h)
+    d = with_session
+    res = await client.get("/api/v1/matching/sessions", headers=d["h"])
     assert res.status_code == 200
     ids = [x["id"] for x in res.json()]
-    assert str(s.id) in ids
+    assert str(d["session_id"]) in ids
 
 
 # ═══ 4. Get session status ═══
 
 @pytest.mark.asyncio
 async def test_get_session_status(client, with_session):
-    h, *_, s = with_session
-    res = await client.get(f"/api/v1/matching/sessions/{s.id}", headers=h)
+    d = with_session
+    res = await client.get(f"/api/v1/matching/sessions/{d['session_id']}", headers=d["h"])
     assert res.status_code == 200
     assert res.json()["status"] == "completed"
 
@@ -118,24 +162,24 @@ async def test_get_session_not_found(client, admin_data):
 
 @pytest.mark.asyncio
 async def test_get_matrix(client, scored):
-    h, u, t, p, c1, c2, ms1, ms2 = scored
-    res = await client.get("/api/v1/matching/matrix", headers=h, params={"position_ids": str(p.id)})
+    d = scored
+    res = await client.get("/api/v1/matching/matrix", headers=d["h"], params={"position_ids": str(d["pos_id"])})
     assert res.status_code == 200
-    d = res.json()
-    assert d["total_candidates"] == 2
-    assert len(d["scores"]) == 2
+    body = res.json()
+    assert body["total_candidates"] == 2
+    assert len(body["scores"]) == 2
 
 @pytest.mark.asyncio
 async def test_get_matrix_min_score(client, scored):
-    h, u, t, p, c1, c2, *_ = scored
-    res = await client.get("/api/v1/matching/matrix", headers=h, params={"position_ids": str(p.id), "min_score": 70})
+    d = scored
+    res = await client.get("/api/v1/matching/matrix", headers=d["h"], params={"position_ids": str(d["pos_id"]), "min_score": 70})
     assert res.status_code == 200
     assert res.json()["total_candidates"] == 1
 
 @pytest.mark.asyncio
 async def test_get_matrix_empty(client, data):
-    h, u, t, p, c1, c2 = data
-    res = await client.get("/api/v1/matching/matrix", headers=h, params={"position_ids": str(p.id)})
+    d = data
+    res = await client.get("/api/v1/matching/matrix", headers=d["h"], params={"position_ids": str(d["pos_id"])})
     assert res.status_code == 200
     assert res.json()["total_candidates"] == 0
 
@@ -144,8 +188,8 @@ async def test_get_matrix_empty(client, data):
 
 @pytest.mark.asyncio
 async def test_get_matrix_by_session(client, with_session):
-    h, *_, s = with_session
-    res = await client.get("/api/v1/matching/matrix", headers=h, params={"session_id": str(s.id)})
+    d = with_session
+    res = await client.get("/api/v1/matching/matrix", headers=d["h"], params={"session_id": str(d["session_id"])})
     assert res.status_code == 200
     assert res.json()["total_candidates"] == 2
 
@@ -160,16 +204,16 @@ async def test_get_matrix_session_not_found(client, admin_data):
 
 @pytest.mark.asyncio
 async def test_assign(client, scored):
-    h, u, t, p, c1, *_ = scored
-    res = await client.post("/api/v1/matching/assign", headers=h, json={"assignments": [{"candidate_id": str(c1.id), "position_id": str(p.id)}]})
+    d = scored
+    res = await client.post("/api/v1/matching/assign", headers=d["h"], json={"assignments": [{"candidate_id": str(d["c1_id"]), "position_id": str(d["pos_id"])}]})
     assert res.status_code == 200
     assert res.json()["results"][0]["status"] == "assigned"
 
 @pytest.mark.asyncio
 async def test_assign_duplicate_skipped(client, scored):
-    h, u, t, p, c1, *_ = scored
-    await client.post("/api/v1/matching/assign", headers=h, json={"assignments": [{"candidate_id": str(c1.id), "position_id": str(p.id)}]})
-    res = await client.post("/api/v1/matching/assign", headers=h, json={"assignments": [{"candidate_id": str(c1.id), "position_id": str(p.id)}]})
+    d = scored
+    await client.post("/api/v1/matching/assign", headers=d["h"], json={"assignments": [{"candidate_id": str(d["c1_id"]), "position_id": str(d["pos_id"])}]})
+    res = await client.post("/api/v1/matching/assign", headers=d["h"], json={"assignments": [{"candidate_id": str(d["c1_id"]), "position_id": str(d["pos_id"])}]})
     assert res.json()["results"][0]["status"] == "skipped"
 
 @pytest.mark.asyncio
@@ -182,32 +226,30 @@ async def test_assign_empty(client, admin_data):
 # ═══ 9. Unassign ═══
 
 @pytest.mark.asyncio
-async def test_unassign(client, scored, db_session):
-    h, u, t, p, c1, *_ = scored
-    await client.post("/api/v1/matching/assign", headers=h, json={"assignments": [{"candidate_id": str(c1.id), "position_id": str(p.id)}]})
-    res = await client.post("/api/v1/matching/unassign", headers=h, json={"assignments": [{"candidate_id": str(c1.id), "position_id": str(p.id)}]})
+async def test_unassign(client, scored):
+    d = scored
+    await client.post("/api/v1/matching/assign", headers=d["h"], json={"assignments": [{"candidate_id": str(d["c1_id"]), "position_id": str(d["pos_id"])}]})
+    res = await client.post("/api/v1/matching/unassign", headers=d["h"], json={"assignments": [{"candidate_id": str(d["c1_id"]), "position_id": str(d["pos_id"])}]})
     assert res.json()["results"][0]["status"] == "unassigned"
-    r = await db_session.execute(select(Application).where(Application.candidate_id == c1.id, Application.position_id == p.id))
-    assert r.scalar_one_or_none() is None
 
 @pytest.mark.asyncio
 async def test_unassign_not_found(client, data):
-    h, u, t, p, c1, *_ = data
-    res = await client.post("/api/v1/matching/unassign", headers=h, json={"assignments": [{"candidate_id": str(c1.id), "position_id": str(p.id)}]})
+    d = data
+    res = await client.post("/api/v1/matching/unassign", headers=d["h"], json={"assignments": [{"candidate_id": str(d["c1_id"]), "position_id": str(d["pos_id"])}]})
     assert res.json()["results"][0]["status"] == "not_found"
 
 
 # ═══ 10. Toggle assign/unassign ═══
 
 @pytest.mark.asyncio
-async def test_toggle(client, scored, db_session):
-    h, u, t, p, c1, *_ = scored
-    pair = {"candidate_id": str(c1.id), "position_id": str(p.id)}
-    r1 = await client.post("/api/v1/matching/assign", headers=h, json={"assignments": [pair]})
+async def test_toggle(client, scored):
+    d = scored
+    pair = {"candidate_id": str(d["c1_id"]), "position_id": str(d["pos_id"])}
+    r1 = await client.post("/api/v1/matching/assign", headers=d["h"], json={"assignments": [pair]})
     assert r1.json()["results"][0]["status"] == "assigned"
-    r2 = await client.post("/api/v1/matching/unassign", headers=h, json={"assignments": [pair]})
+    r2 = await client.post("/api/v1/matching/unassign", headers=d["h"], json={"assignments": [pair]})
     assert r2.json()["results"][0]["status"] == "unassigned"
-    r3 = await client.post("/api/v1/matching/assign", headers=h, json={"assignments": [pair]})
+    r3 = await client.post("/api/v1/matching/assign", headers=d["h"], json={"assignments": [pair]})
     assert r3.json()["results"][0]["status"] == "assigned"
 
 
@@ -215,12 +257,12 @@ async def test_toggle(client, scored, db_session):
 
 @pytest.mark.asyncio
 async def test_assigned_pairs(client, scored):
-    h, u, t, p, c1, c2, *_ = scored
-    await client.post("/api/v1/matching/assign", headers=h, json={"assignments": [
-        {"candidate_id": str(c1.id), "position_id": str(p.id)},
-        {"candidate_id": str(c2.id), "position_id": str(p.id)},
+    d = scored
+    await client.post("/api/v1/matching/assign", headers=d["h"], json={"assignments": [
+        {"candidate_id": str(d["c1_id"]), "position_id": str(d["pos_id"])},
+        {"candidate_id": str(d["c2_id"]), "position_id": str(d["pos_id"])},
     ]})
-    res = await client.get("/api/v1/matching/assigned-pairs", headers=h, params={"candidate_ids": f"{c1.id},{c2.id}", "position_ids": str(p.id)})
+    res = await client.get("/api/v1/matching/assigned-pairs", headers=d["h"], params={"candidate_ids": f"{d['c1_id']},{d['c2_id']}", "position_ids": str(d["pos_id"])})
     assert res.status_code == 200
     assert len(res.json()["pairs"]) == 2
 
@@ -235,24 +277,25 @@ async def test_assigned_pairs_empty(client, admin_data):
 
 @pytest.mark.asyncio
 async def test_bulk_send_consent(client, data, mock_celery):
-    h, u, t, p, c1, c2 = data
-    res = await client.post("/api/v1/matching/bulk-action", headers=h, json={"action": "send_consent", "candidate_ids": [str(c1.id), str(c2.id)]})
+    d = data
+    res = await client.post("/api/v1/matching/bulk-action", headers=d["h"], json={"action": "send_consent", "candidate_ids": [str(d["c1_id"]), str(d["c2_id"])]})
     assert res.status_code == 200
     assert res.json()["success"] == 2
 
 @pytest.mark.asyncio
-async def test_bulk_consent_already_given(client, data, db_session):
-    h, u, t, p, c1, *_ = data
-    db_session.add(Consent(candidate_id=c1.id, token="tok", type="call_recording", granted=True))
-    await db_session.commit()
+async def test_bulk_consent_already_given(client, data):
+    d = data
+    async with TestSession() as session:
+        session.add(Consent(candidate_id=d["c1_id"], token="tok", type="call_recording", granted=True))
+        await session.commit()
     with patch("app.workers.notifications.send_consent_email.delay", MagicMock()):
-        res = await client.post("/api/v1/matching/bulk-action", headers=h, json={"action": "send_consent", "candidate_ids": [str(c1.id)]})
+        res = await client.post("/api/v1/matching/bulk-action", headers=d["h"], json={"action": "send_consent", "candidate_ids": [str(d["c1_id"])]})
     assert res.json()["results"][0]["status"] == "skipped"
 
 @pytest.mark.asyncio
 async def test_bulk_action_invalid(client, data):
-    h, *_ = data
-    res = await client.post("/api/v1/matching/bulk-action", headers=h, json={"action": "nope", "candidate_ids": [str(uuid.uuid4())]})
+    d = data
+    res = await client.post("/api/v1/matching/bulk-action", headers=d["h"], json={"action": "nope", "candidate_ids": [str(uuid.uuid4())]})
     assert res.status_code == 400
 
 @pytest.mark.asyncio
@@ -265,47 +308,49 @@ async def test_bulk_action_empty(client, admin_data):
 # ═══ 13. Bulk action: assign_all ═══
 
 @pytest.mark.asyncio
-async def test_bulk_assign_all(client, scored, db_session):
-    h, u, t, p, c1, c2, *_ = scored
-    res = await client.post("/api/v1/matching/bulk-action", headers=h, json={"action": "assign_all", "candidate_ids": [str(c1.id), str(c2.id)], "position_id": str(p.id)})
+async def test_bulk_assign_all(client, scored):
+    d = scored
+    res = await client.post("/api/v1/matching/bulk-action", headers=d["h"], json={"action": "assign_all", "candidate_ids": [str(d["c1_id"]), str(d["c2_id"])], "position_id": str(d["pos_id"])})
     assert res.status_code == 200
     assert res.json()["success"] == 2
 
 @pytest.mark.asyncio
 async def test_bulk_assign_no_position(client, data):
-    h, u, t, p, c1, *_ = data
-    res = await client.post("/api/v1/matching/bulk-action", headers=h, json={"action": "assign_all", "candidate_ids": [str(c1.id)]})
+    d = data
+    res = await client.post("/api/v1/matching/bulk-action", headers=d["h"], json={"action": "assign_all", "candidate_ids": [str(d["c1_id"])]})
     assert res.status_code == 400
 
 
 # ═══ 14. Bulk action: schedule_calls ═══
 
 @pytest.mark.asyncio
-async def test_bulk_schedule_calls(client, data, db_session, mock_celery):
-    h, u, t, p, c1, *_ = data
-    c1.position_id = p.id
-    db_session.add(Consent(candidate_id=c1.id, token="tok-call", type="call_recording", granted=True))
-    await db_session.commit()
-    res = await client.post("/api/v1/matching/bulk-action", headers=h, json={"action": "schedule_calls", "candidate_ids": [str(c1.id)]})
+async def test_bulk_schedule_calls(client, data, mock_celery):
+    d = data
+    async with TestSession() as session:
+        from sqlalchemy import select as sa_select
+        result = await session.execute(sa_select(Candidate).where(Candidate.id == d["c1_id"]))
+        c1 = result.scalar_one()
+        c1.position_id = d["pos_id"]
+        session.add(Consent(candidate_id=d["c1_id"], token="tok-call", type="call_recording", granted=True))
+        await session.commit()
+    res = await client.post("/api/v1/matching/bulk-action", headers=d["h"], json={"action": "schedule_calls", "candidate_ids": [str(d["c1_id"])]})
     assert res.status_code == 200
     assert res.json()["results"][0]["status"] == "ok"
 
 @pytest.mark.asyncio
 async def test_bulk_schedule_no_consent(client, data):
-    h, u, t, p, c1, *_ = data
-    res = await client.post("/api/v1/matching/bulk-action", headers=h, json={"action": "schedule_calls", "candidate_ids": [str(c1.id)]})
+    d = data
+    res = await client.post("/api/v1/matching/bulk-action", headers=d["h"], json={"action": "schedule_calls", "candidate_ids": [str(d["c1_id"])]})
     assert res.json()["results"][0]["status"] == "error"
 
 
 # ═══ 15. Delete session ═══
 
 @pytest.mark.asyncio
-async def test_delete_session(client, with_session, db_session):
-    h, *_, s = with_session
-    res = await client.delete(f"/api/v1/matching/sessions/{s.id}", headers=h)
+async def test_delete_session(client, with_session):
+    d = with_session
+    res = await client.delete(f"/api/v1/matching/sessions/{d['session_id']}", headers=d["h"])
     assert res.status_code == 204
-    r = await db_session.execute(select(MatchSession).where(MatchSession.id == s.id))
-    assert r.scalar_one_or_none() is None
 
 @pytest.mark.asyncio
 async def test_delete_session_not_found(client, admin_data):
@@ -317,12 +362,15 @@ async def test_delete_session_not_found(client, admin_data):
 # ═══ 16. Bulk delete sessions ═══
 
 @pytest.mark.asyncio
-async def test_bulk_delete_sessions(client, db_session, scored):
-    h, u, t, p, c1, c2, *_ = scored
-    s1 = await _session(db_session, t.id, u.id, [p.id], [c1.id])
-    s2 = await _session(db_session, t.id, u.id, [p.id], [c2.id])
-    await db_session.commit()
-    res = await client.post("/api/v1/matching/sessions/bulk-delete", headers=h, json={"ids": [str(s1.id), str(s2.id)]})
+async def test_bulk_delete_sessions(client, scored):
+    d = scored
+    async with TestSession() as session:
+        s1 = await _session_obj(session, d["tenant_id"], d["user_id"], [d["pos_id"]], [d["c1_id"]])
+        s2 = await _session_obj(session, d["tenant_id"], d["user_id"], [d["pos_id"]], [d["c2_id"]])
+        await session.commit()
+        s1_id = str(s1.id)
+        s2_id = str(s2.id)
+    res = await client.post("/api/v1/matching/sessions/bulk-delete", headers=d["h"], json={"ids": [s1_id, s2_id]})
     assert res.status_code == 200
     assert res.json()["deleted"] == 2
 

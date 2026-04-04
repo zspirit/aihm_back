@@ -3,17 +3,14 @@ import json
 import structlog
 from celery import shared_task
 
+from app.workers.base import worker_task
+
 logger = structlog.get_logger()
 
 
 @shared_task(name="analysis.analyze", bind=True, max_retries=3)
 def analyze_interview(self, interview_id: str):
-    logger.info("analysis_start", interview_id=interview_id)
-
-    from app.workers.cv_processing import get_sync_session
-
-    session = get_sync_session()
-    try:
+    with worker_task("analysis", self, interview_id=interview_id) as ctx:
         from uuid import UUID
 
         from sqlalchemy import select
@@ -24,6 +21,7 @@ def analyze_interview(self, interview_id: str):
         from app.models.position import Position
         from app.models.transcription import Transcription
 
+        session = ctx.session
         interview = session.get(Interview, UUID(interview_id))
         if not interview:
             return
@@ -68,13 +66,6 @@ def analyze_interview(self, interview_id: str):
         from app.workers.report_generation import generate_report
 
         generate_report.delay(interview_id)
-
-    except Exception as e:
-        session.rollback()
-        logger.error("analysis_error", interview_id=interview_id, error=str(e))
-        raise self.retry(exc=e, countdown=30)
-    finally:
-        session.close()
 
 
 def _format_skills_for_prompt(required_skills: list | None) -> str:

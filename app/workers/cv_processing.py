@@ -3,13 +3,9 @@ import json
 import structlog
 from celery import shared_task
 
+from app.workers.base import get_sync_session
+
 logger = structlog.get_logger()
-
-
-def get_sync_session():
-    from app.core.database import sync_session_factory
-
-    return sync_session_factory()
 
 
 @shared_task(name="cv.process", bind=True, max_retries=3)

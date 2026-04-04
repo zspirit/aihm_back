@@ -267,7 +267,7 @@ class TestGenerateQuestionsTask:
         session.get.side_effect = get_side_effect
         return session
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_happy_path(self, mock_get_session):
         from app.workers.question_generation import generate_questions
 
@@ -289,7 +289,7 @@ class TestGenerateQuestionsTask:
         session.commit.assert_called_once()
         session.close.assert_called_once()
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_candidate_not_found(self, mock_get_session):
         from app.workers.question_generation import generate_questions
 
@@ -301,7 +301,7 @@ class TestGenerateQuestionsTask:
         assert result is None
         session.commit.assert_not_called()
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_position_not_found(self, mock_get_session):
         from app.workers.question_generation import generate_questions
 
@@ -321,7 +321,7 @@ class TestGenerateQuestionsTask:
         assert result is None
         session.commit.assert_not_called()
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_claude_error_retries(self, mock_get_session):
         from app.workers.question_generation import generate_questions
 
@@ -341,7 +341,7 @@ class TestGenerateQuestionsTask:
         session.rollback.assert_called_once()
         session.close.assert_called_once()
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_empty_cv_data(self, mock_get_session):
         from app.workers.question_generation import generate_questions
 
@@ -362,7 +362,7 @@ class TestGenerateQuestionsTask:
         assert len(result) == 2
         session.commit.assert_called_once()
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_empty_skills(self, mock_get_session):
         from app.workers.question_generation import generate_questions
 

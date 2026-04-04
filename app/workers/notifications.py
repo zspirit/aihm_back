@@ -1,6 +1,8 @@
 import structlog
 from celery import shared_task
 
+from app.workers.base import worker_session
+
 logger = structlog.get_logger()
 
 
@@ -67,10 +69,7 @@ def send_sms(to: str, body: str):
 
 @shared_task(name="notifications.send_consent_email")
 def send_consent_email(candidate_id: str):
-    from app.workers.cv_processing import get_sync_session
-
-    session = get_sync_session()
-    try:
+    with worker_session() as session:
         from uuid import UUID
 
         from sqlalchemy import select
@@ -129,17 +128,11 @@ def send_consent_email(candidate_id: str):
         session.commit()
         logger.info("consent_email_sent", candidate_id=candidate_id, to=candidate.email)
 
-    finally:
-        session.close()
-
 
 @shared_task(name="notifications.send_consent_reminder")
 def send_consent_reminder(candidate_id: str):
     """Send a reminder email/SMS to candidates who haven't consented yet."""
-    from app.workers.cv_processing import get_sync_session
-
-    session = get_sync_session()
-    try:
+    with worker_session() as session:
         from uuid import UUID
 
         from sqlalchemy import select
@@ -203,17 +196,11 @@ def send_consent_reminder(candidate_id: str):
 
         logger.info("consent_reminder_sent", candidate_id=candidate_id)
 
-    finally:
-        session.close()
-
 
 @shared_task(name="notifications.send_report_ready")
 def send_report_ready(interview_id: str):
     """Send email to all admin/recruiter users in tenant when report is ready."""
-    from app.workers.cv_processing import get_sync_session
-
-    session = get_sync_session()
-    try:
+    with worker_session() as session:
         from uuid import UUID
 
         from sqlalchemy import select
@@ -303,17 +290,11 @@ def send_report_ready(interview_id: str):
             user_count=len(users),
         )
 
-    finally:
-        session.close()
-
 
 @shared_task(name="notifications.send_interview_complete")
 def send_interview_complete(interview_id: str):
     """Notify candidate that their interview is complete."""
-    from app.workers.cv_processing import get_sync_session
-
-    session = get_sync_session()
-    try:
+    with worker_session() as session:
         from uuid import UUID
 
         from app.models.candidate import Candidate
@@ -353,6 +334,3 @@ def send_interview_complete(interview_id: str):
         )
 
         logger.info("interview_complete_email_sent", interview_id=interview_id)
-
-    finally:
-        session.close()

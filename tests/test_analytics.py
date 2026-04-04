@@ -63,3 +63,42 @@ async def test_analytics_with_position(client, admin_data):
     stats = res.json()
     assert len(stats) == 1
     assert stats[0]["title"] == "Dev Python"
+
+
+@pytest.mark.asyncio
+async def test_analytics_timeline(client, admin_data):
+    """GET /api/v1/analytics/timeline should return timeline data."""
+    headers, *_ = admin_data
+    res = await client.get("/api/v1/analytics/timeline", headers=headers)
+    assert res.status_code == 200
+    data = res.json()
+    assert isinstance(data, (list, dict))
+
+
+@pytest.mark.asyncio
+async def test_analytics_recruiters(client, admin_data):
+    """GET /api/v1/analytics/recruiters should return recruiter stats."""
+    headers, *_ = admin_data
+    res = await client.get("/api/v1/analytics/recruiters", headers=headers)
+    assert res.status_code == 200
+    data = res.json()
+    assert isinstance(data, list)
+
+
+@pytest.mark.asyncio
+async def test_analytics_interview_quality(client, admin_data):
+    """GET /api/v1/analytics/interview-quality should return quality metrics."""
+    headers, *_ = admin_data
+    res = await client.get("/api/v1/analytics/interview-quality", headers=headers)
+    assert res.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_analytics_overview_values_coherent(client, admin_data):
+    """Overview values should be non-negative and coherent."""
+    headers, *_ = admin_data
+    res = await client.get("/api/v1/analytics/overview", headers=headers)
+    data = res.json()
+    assert data["total_interviews"] >= data["completed_interviews"]
+    assert 0 <= data["success_rate"] <= 100
+    assert data["avg_cv_score"] >= 0

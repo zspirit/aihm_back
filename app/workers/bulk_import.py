@@ -9,19 +9,9 @@ import structlog
 from celery import shared_task
 from openpyxl import load_workbook
 
+from app.workers.base import get_sync_session
+
 logger = structlog.get_logger()
-
-
-def get_sync_session():
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session
-
-    from app.core.config import get_settings
-
-    settings = get_settings()
-    sync_url = settings.DATABASE_URL.replace("+asyncpg", "")
-    engine = create_engine(sync_url)
-    return Session(engine)
 
 
 @shared_task(name="bulk_import.process", bind=True, max_retries=1)

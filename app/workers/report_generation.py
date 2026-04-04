@@ -3,17 +3,14 @@ import json
 import structlog
 from celery import shared_task
 
+from app.workers.base import worker_task
+
 logger = structlog.get_logger()
 
 
 @shared_task(name="report.generate", bind=True, max_retries=3)
 def generate_report(self, interview_id: str):
-    logger.info("report_generation_start", interview_id=interview_id)
-
-    from app.workers.cv_processing import get_sync_session
-
-    session = get_sync_session()
-    try:
+    with worker_task("report_generation", self, interview_id=interview_id) as ctx:
         from uuid import UUID
 
         from sqlalchemy import select
@@ -25,6 +22,7 @@ def generate_report(self, interview_id: str):
         from app.models.report import Report
         from app.models.transcription import Transcription
 
+        session = ctx.session
         interview = session.get(Interview, UUID(interview_id))
         if not interview:
             return
@@ -75,13 +73,6 @@ def generate_report(self, interview_id: str):
 
         # Cleanup audio file from MinIO (no longer needed after report is generated)
         _cleanup_audio(interview)
-
-    except Exception as e:
-        session.rollback()
-        logger.error("report_generation_error", interview_id=interview_id, error=str(e))
-        raise self.retry(exc=e, countdown=30)
-    finally:
-        session.close()
 
 
 def _generate_and_upload_pdf(content: dict, interview_id: str) -> str | None:

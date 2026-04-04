@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from tests.conftest import _create_user
+from tests.conftest import _create_user, TestSession
 
 
 async def _create_position(client, headers, title="Test Position"):
@@ -15,13 +15,15 @@ async def _create_position(client, headers, title="Test Position"):
 
 
 @pytest_asyncio.fixture()
-async def admin_headers(db_session):
-    headers, _, _ = await _create_user(db_session, "bulk_admin@test.com", "admin")
+async def admin_headers(_setup_db):
+    async with TestSession() as session:
+        headers, _, _ = await _create_user(session, "bulk_admin@test.com", "admin")
     return headers
 
 @pytest_asyncio.fixture()
-async def viewer_hdrs(db_session):
-    headers, _, _ = await _create_user(db_session, "bulk_viewer@test.com", "viewer", "Viewer Bulk Corp")
+async def viewer_hdrs(_setup_db):
+    async with TestSession() as session:
+        headers, _, _ = await _create_user(session, "bulk_viewer@test.com", "viewer", "Viewer Bulk Corp")
     return headers
 
 

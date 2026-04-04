@@ -175,7 +175,7 @@ class TestSegmentTranscription:
 
 
 class TestTranscribeAudioTask:
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_interview_not_found(self, mock_get_session):
         from app.workers.transcription import transcribe_audio
 
@@ -187,7 +187,7 @@ class TestTranscribeAudioTask:
         assert result is None
         session.commit.assert_not_called()
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_no_audio_path(self, mock_get_session):
         from app.workers.transcription import transcribe_audio
 
@@ -204,7 +204,7 @@ class TestTranscribeAudioTask:
     @patch("app.workers.transcription.segment_transcription")
     @patch("app.workers.transcription.transcribe_with_whisper")
     @patch("app.services.storage.download_file")
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_happy_path(self, mock_get_session, mock_download, mock_whisper,
                         mock_segment, mock_analyze):
         from app.workers.transcription import transcribe_audio
@@ -243,7 +243,7 @@ class TestTranscribeAudioTask:
 
     @patch("app.workers.transcription.transcribe_with_whisper")
     @patch("app.services.storage.download_file")
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_whisper_error_retries(self, mock_get_session, mock_download, mock_whisper):
         from app.workers.transcription import transcribe_audio
 
@@ -265,7 +265,7 @@ class TestTranscribeAudioTask:
     @patch("app.workers.transcription.segment_transcription")
     @patch("app.workers.transcription.transcribe_with_whisper")
     @patch("app.services.storage.download_file")
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_no_questions_segments_full(self, mock_get_session, mock_download, mock_whisper,
                                         mock_segment, mock_analyze):
         from app.workers.transcription import transcribe_audio

@@ -159,7 +159,7 @@ class TestSendSms:
 
 
 class TestSendConsentEmail:
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_candidate_not_found(self, mock_get_session):
         from app.workers.notifications import send_consent_email
 
@@ -171,7 +171,7 @@ class TestSendConsentEmail:
         assert result is None
         session.close.assert_called_once()
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_candidate_no_email(self, mock_get_session):
         from app.workers.notifications import send_consent_email
 
@@ -184,7 +184,7 @@ class TestSendConsentEmail:
         assert result is None
 
     @patch("app.services.email.render")
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_happy_path_with_phone(self, mock_get_session, mock_render):
         from app.workers.notifications import send_consent_email
 
@@ -230,7 +230,7 @@ class TestSendConsentEmail:
         session.commit.assert_called_once()
 
     @patch("app.services.email.render")
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_no_phone_skips_sms(self, mock_get_session, mock_render):
         from app.workers.notifications import send_consent_email
 
@@ -272,7 +272,7 @@ class TestSendConsentEmail:
             mock_send_email.delay.assert_called_once()
             mock_send_sms.delay.assert_not_called()
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_no_consent_record(self, mock_get_session):
         from app.workers.notifications import send_consent_email
 
@@ -290,7 +290,7 @@ class TestSendConsentEmail:
 
 
 class TestSendConsentReminder:
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_candidate_not_found(self, mock_get_session):
         from app.workers.notifications import send_consent_reminder
 
@@ -301,7 +301,7 @@ class TestSendConsentReminder:
         result = send_consent_reminder(str(uuid.uuid4()))
         assert result is None
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_already_consented_skips(self, mock_get_session):
         from app.workers.notifications import send_consent_reminder
 
@@ -320,7 +320,7 @@ class TestSendConsentReminder:
         assert result is None
 
     @patch("app.services.email.render")
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_happy_path(self, mock_get_session, mock_render):
         from app.workers.notifications import send_consent_reminder
 
@@ -368,7 +368,7 @@ class TestSendConsentReminder:
 
 
 class TestSendReportReady:
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_interview_not_found(self, mock_get_session):
         from app.workers.notifications import send_report_ready
 
@@ -380,7 +380,7 @@ class TestSendReportReady:
         assert result is None
 
     @patch("app.services.email.render")
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_happy_path(self, mock_get_session, mock_render):
         from app.workers.notifications import send_report_ready
 
@@ -435,7 +435,7 @@ class TestSendReportReady:
         session.commit.assert_called_once()
 
     @patch("app.services.email.render")
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_no_report_content(self, mock_get_session, mock_render):
         from app.workers.notifications import send_report_ready
 
@@ -483,7 +483,7 @@ class TestSendReportReady:
 
 
 class TestSendInterviewComplete:
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_interview_not_found(self, mock_get_session):
         from app.workers.notifications import send_interview_complete
 
@@ -494,7 +494,7 @@ class TestSendInterviewComplete:
         result = send_interview_complete(str(uuid.uuid4()))
         assert result is None
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_candidate_no_email(self, mock_get_session):
         from app.workers.notifications import send_interview_complete
 
@@ -518,7 +518,7 @@ class TestSendInterviewComplete:
         assert result is None
 
     @patch("app.services.email.render")
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_happy_path(self, mock_get_session, mock_render):
         from app.workers.notifications import send_interview_complete
 
@@ -560,7 +560,7 @@ class TestSendInterviewComplete:
             assert "Dev Python" in call_args[0][1]
 
     @patch("app.services.email.render")
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_duration_formatting(self, mock_get_session, mock_render):
         from app.workers.notifications import send_interview_complete
 

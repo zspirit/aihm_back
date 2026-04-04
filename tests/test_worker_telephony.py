@@ -54,7 +54,7 @@ class TestInitiateCall:
         session.get.side_effect = get_side_effect
         return session
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_interview_not_found(self, mock_get_session):
         from app.workers.telephony import initiate_call
 
@@ -66,7 +66,7 @@ class TestInitiateCall:
         assert result is None
         session.commit.assert_not_called()
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_candidate_not_found(self, mock_get_session):
         from app.workers.telephony import initiate_call
 
@@ -86,7 +86,7 @@ class TestInitiateCall:
         assert result is None
         session.commit.assert_not_called()
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_position_not_found(self, mock_get_session):
         from app.workers.telephony import initiate_call
 
@@ -112,7 +112,7 @@ class TestInitiateCall:
     @patch("twilio.rest.Client")
     @patch("app.workers.question_generation.generate_interview_questions")
     @patch("app.core.config.get_settings")
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_happy_path(self, mock_get_session, mock_settings, mock_gen_questions, mock_twilio_client):
         from app.workers.telephony import initiate_call
 
@@ -148,7 +148,7 @@ class TestInitiateCall:
     @patch("twilio.rest.Client")
     @patch("app.workers.question_generation.generate_interview_questions")
     @patch("app.core.config.get_settings")
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_twilio_error_retries(self, mock_get_session, mock_settings, mock_gen_questions, mock_twilio_client):
         from app.workers.telephony import initiate_call
 
@@ -178,7 +178,7 @@ class TestInitiateCall:
     @patch("twilio.rest.Client")
     @patch("app.workers.question_generation.generate_interview_questions")
     @patch("app.core.config.get_settings")
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_twiml_url_contains_interview_id(self, mock_get_session, mock_settings, mock_gen_questions, mock_twilio_client):
         from app.workers.telephony import initiate_call
 
@@ -212,7 +212,7 @@ class TestInitiateCall:
 
 
 class TestHandleCallStatus:
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.telephony.get_sync_session")
     def test_interview_not_found(self, mock_get_session):
         from app.workers.telephony import handle_call_status
 
@@ -226,7 +226,7 @@ class TestHandleCallStatus:
         assert result is None
         session.commit.assert_not_called()
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.telephony.get_sync_session")
     def test_completed_status(self, mock_get_session):
         from app.workers.telephony import handle_call_status
 
@@ -249,7 +249,7 @@ class TestHandleCallStatus:
         assert candidate.pipeline_status == "call_done"
         session.commit.assert_called_once()
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.telephony.get_sync_session")
     def test_completed_candidate_not_found(self, mock_get_session):
         from app.workers.telephony import handle_call_status
 
@@ -267,7 +267,7 @@ class TestHandleCallStatus:
         assert interview.status == "completed"
         session.commit.assert_called_once()
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.telephony.get_sync_session")
     def test_busy_status(self, mock_get_session):
         from app.workers.telephony import handle_call_status
 
@@ -285,7 +285,7 @@ class TestHandleCallStatus:
         assert interview.ended_at is not None
         session.commit.assert_called_once()
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.telephony.get_sync_session")
     def test_failed_status(self, mock_get_session):
         from app.workers.telephony import handle_call_status
 
@@ -301,7 +301,7 @@ class TestHandleCallStatus:
 
         assert interview.status == "failed"
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.telephony.get_sync_session")
     def test_no_answer_status(self, mock_get_session):
         from app.workers.telephony import handle_call_status
 
@@ -317,7 +317,7 @@ class TestHandleCallStatus:
 
         assert interview.status == "no_answer"
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.telephony.get_sync_session")
     def test_canceled_status(self, mock_get_session):
         from app.workers.telephony import handle_call_status
 
@@ -333,7 +333,7 @@ class TestHandleCallStatus:
 
         assert interview.status == "no_answer"
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.telephony.get_sync_session")
     def test_unknown_status_no_change(self, mock_get_session):
         from app.workers.telephony import handle_call_status
 
@@ -351,7 +351,7 @@ class TestHandleCallStatus:
         assert interview.status == "in_progress"
         session.commit.assert_called_once()
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.telephony.get_sync_session")
     def test_db_error_rollback(self, mock_get_session):
         from app.workers.telephony import handle_call_status
 
@@ -366,7 +366,7 @@ class TestHandleCallStatus:
 
 
 class TestHandleRecordingReady:
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.telephony.get_sync_session")
     def test_interview_not_found(self, mock_get_session):
         from app.workers.telephony import handle_recording_ready
 
@@ -384,7 +384,7 @@ class TestHandleRecordingReady:
     @patch("app.services.storage.s3_client")
     @patch("httpx.get")
     @patch("app.core.config.get_settings")
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.telephony.get_sync_session")
     def test_happy_path(self, mock_get_session, mock_settings, mock_httpx_get,
                         mock_s3_client, mock_ensure_bucket, mock_transcribe):
         from app.workers.telephony import handle_recording_ready
@@ -427,7 +427,7 @@ class TestHandleRecordingReady:
 
     @patch("httpx.get")
     @patch("app.core.config.get_settings")
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.telephony.get_sync_session")
     def test_download_failure_no_commit(self, mock_get_session, mock_settings, mock_httpx_get):
         from app.workers.telephony import handle_recording_ready
 
@@ -455,7 +455,7 @@ class TestHandleRecordingReady:
 
     @patch("httpx.get")
     @patch("app.core.config.get_settings")
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.telephony.get_sync_session")
     def test_httpx_error_rollback(self, mock_get_session, mock_settings, mock_httpx_get):
         from app.workers.telephony import handle_recording_ready
 

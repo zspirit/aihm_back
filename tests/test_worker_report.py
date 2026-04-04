@@ -408,7 +408,7 @@ class TestGenerateReportTask:
 
     @patch("app.workers.report_generation._cleanup_audio")
     @patch("app.workers.report_generation._generate_and_upload_pdf")
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_happy_path(self, mock_get_session, mock_pdf, mock_cleanup):
         from app.workers.report_generation import generate_report
 
@@ -438,7 +438,7 @@ class TestGenerateReportTask:
         mock_cleanup.assert_called_once_with(interview)
         mock_notif.delay.assert_called_once_with(str(interview.id))
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_interview_not_found(self, mock_get_session):
         from app.workers.report_generation import generate_report
 
@@ -450,7 +450,7 @@ class TestGenerateReportTask:
         assert result is None
         session.commit.assert_not_called()
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_candidate_not_found(self, mock_get_session):
         from app.workers.report_generation import generate_report
 
@@ -470,7 +470,7 @@ class TestGenerateReportTask:
         assert result is None
         session.commit.assert_not_called()
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_position_not_found(self, mock_get_session):
         from app.workers.report_generation import generate_report
 
@@ -495,7 +495,7 @@ class TestGenerateReportTask:
 
     @patch("app.workers.report_generation._cleanup_audio")
     @patch("app.workers.report_generation._generate_and_upload_pdf")
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_no_analysis_no_transcription(self, mock_get_session, mock_pdf, mock_cleanup):
         from app.workers.report_generation import generate_report
 
@@ -523,7 +523,7 @@ class TestGenerateReportTask:
 
     @patch("app.workers.report_generation._cleanup_audio")
     @patch("app.workers.report_generation._generate_and_upload_pdf")
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_pdf_failure_still_saves_report(self, mock_get_session, mock_pdf, mock_cleanup):
         from app.workers.report_generation import generate_report
 
@@ -555,7 +555,7 @@ class TestGenerateReportTask:
         report_obj = session.add.call_args[0][0]
         assert report_obj.pdf_file_path is None
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_claude_error_retries(self, mock_get_session):
         from app.workers.report_generation import generate_report
 
@@ -581,7 +581,7 @@ class TestGenerateReportTask:
 
     @patch("app.workers.report_generation._cleanup_audio")
     @patch("app.workers.report_generation._generate_and_upload_pdf")
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_notification_failure_non_blocking(self, mock_get_session, mock_pdf, mock_cleanup):
         from app.workers.report_generation import generate_report
 

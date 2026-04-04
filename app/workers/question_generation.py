@@ -3,22 +3,20 @@ import json
 import structlog
 from celery import shared_task
 
+from app.workers.base import worker_task
+
 logger = structlog.get_logger()
 
 
 @shared_task(name="questions.generate", bind=True, max_retries=3)
 def generate_questions(self, candidate_id: str):
-    logger.info("question_generation_start", candidate_id=candidate_id)
-
-    from app.workers.cv_processing import get_sync_session
-
-    session = get_sync_session()
-    try:
+    with worker_task("question_generation", self, candidate_id=candidate_id) as ctx:
         from uuid import UUID
 
         from app.models.candidate import Candidate
         from app.models.position import Position
 
+        session = ctx.session
         candidate = session.get(Candidate, UUID(candidate_id))
         if not candidate:
             return
@@ -30,7 +28,6 @@ def generate_questions(self, candidate_id: str):
 
         questions = generate_interview_questions(candidate, position)
 
-        # Store generated questions on the position if empty, or use per-interview
         logger.info(
             "question_generation_done",
             candidate_id=candidate_id,
@@ -39,13 +36,6 @@ def generate_questions(self, candidate_id: str):
 
         session.commit()
         return questions
-
-    except Exception as e:
-        session.rollback()
-        logger.error("question_generation_error", candidate_id=candidate_id, error=str(e))
-        raise self.retry(exc=e, countdown=30)
-    finally:
-        session.close()
 
 
 def _format_skills_for_prompt(required_skills: list) -> str:

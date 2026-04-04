@@ -195,7 +195,7 @@ class TestAnalyzeInterviewTask:
         session.execute.return_value = mock_scalar
         return session
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_happy_path(self, mock_get_session):
         from app.workers.analysis import analyze_interview
 
@@ -224,7 +224,7 @@ class TestAnalyzeInterviewTask:
         session.commit.assert_called_once()
         assert candidate.pipeline_status == "evaluated"
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_interview_not_found(self, mock_get_session):
         from app.workers.analysis import analyze_interview
 
@@ -236,7 +236,7 @@ class TestAnalyzeInterviewTask:
         assert result is None
         session.commit.assert_not_called()
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_no_transcription(self, mock_get_session):
         from app.workers.analysis import analyze_interview
 
@@ -253,7 +253,7 @@ class TestAnalyzeInterviewTask:
         assert result is None
         session.commit.assert_not_called()
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_candidate_not_found(self, mock_get_session):
         from app.workers.analysis import analyze_interview
 
@@ -277,7 +277,7 @@ class TestAnalyzeInterviewTask:
         result = analyze_interview(str(uuid.uuid4()))
         assert result is None
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_position_not_found(self, mock_get_session):
         from app.workers.analysis import analyze_interview
 
@@ -304,7 +304,7 @@ class TestAnalyzeInterviewTask:
         result = analyze_interview(str(uuid.uuid4()))
         assert result is None
 
-    @patch("app.workers.cv_processing.get_sync_session")
+    @patch("app.workers.base.get_sync_session")
     def test_analysis_error_retries(self, mock_get_session):
         from app.workers.analysis import analyze_interview
 

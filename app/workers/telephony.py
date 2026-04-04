@@ -3,17 +3,14 @@ from datetime import datetime, timezone
 import structlog
 from celery import shared_task
 
+from app.workers.base import get_sync_session, worker_task
+
 logger = structlog.get_logger()
 
 
 @shared_task(name="telephony.initiate_call", bind=True, max_retries=2)
 def initiate_call(self, interview_id: str):
-    logger.info("call_initiate_start", interview_id=interview_id)
-
-    from app.workers.cv_processing import get_sync_session
-
-    session = get_sync_session()
-    try:
+    with worker_task("call_initiate", self, retry_countdown=60, interview_id=interview_id) as ctx:
         from uuid import UUID
 
         from app.core.config import get_settings
@@ -21,6 +18,7 @@ def initiate_call(self, interview_id: str):
         from app.models.interview import Interview
         from app.models.position import Position
 
+        session = ctx.session
         settings = get_settings()
         interview = session.get(Interview, UUID(interview_id))
         if not interview:
@@ -74,19 +72,10 @@ def initiate_call(self, interview_id: str):
         session.commit()
         logger.info("call_initiated", interview_id=interview_id, call_sid=call.sid)
 
-    except Exception as e:
-        session.rollback()
-        logger.error("call_initiate_error", interview_id=interview_id, error=str(e))
-        raise self.retry(exc=e, countdown=60)
-    finally:
-        session.close()
-
 
 @shared_task(name="telephony.handle_call_status")
 def handle_call_status(call_sid: str, call_status: str, duration: int):
     logger.info("call_status_update", call_sid=call_sid, status=call_status, duration=duration)
-
-    from app.workers.cv_processing import get_sync_session
 
     session = get_sync_session()
     try:
@@ -126,8 +115,6 @@ def handle_call_status(call_sid: str, call_status: str, duration: int):
 @shared_task(name="telephony.handle_recording_ready")
 def handle_recording_ready(call_sid: str, recording_url: str, recording_sid: str, duration: int):
     logger.info("recording_ready", call_sid=call_sid, recording_sid=recording_sid)
-
-    from app.workers.cv_processing import get_sync_session
 
     session = get_sync_session()
     try:
