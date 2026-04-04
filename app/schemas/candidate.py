@@ -37,6 +37,7 @@ class CandidateResponse(BaseModel):
     profile_suggestions: dict | None = None
     tags: list | None = None
     notes: str | None = None
+    summary_json: dict | None = None
 
     model_config = {"from_attributes": True}
 

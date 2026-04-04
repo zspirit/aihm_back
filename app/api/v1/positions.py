@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user, get_tenant_id, require_role
+from app.models.application import Application
 from app.models.candidate import Candidate
 from app.models.match_score import MatchScore, MatchSession
 from app.models.position import Position
@@ -87,7 +88,18 @@ async def list_positions(
 
     responses = []
     for pos in positions:
-        count_result = await db.execute(select(func.count()).where(Candidate.position_id == pos.id))
+        # Count candidates linked via Application table OR direct position_id
+        count_result = await db.execute(
+            select(func.count(func.distinct(Candidate.id)))
+            .select_from(Candidate)
+            .outerjoin(Application, Application.candidate_id == Candidate.id)
+            .where(
+                or_(
+                    Candidate.position_id == pos.id,
+                    Application.position_id == pos.id,
+                )
+            )
+        )
         count = count_result.scalar()
         responses.append(_build_position_response(pos, candidate_count=count))
 
@@ -214,7 +226,15 @@ async def get_position(
         raise HTTPException(status_code=404, detail="Poste introuvable")
 
     count_result = await db.execute(
-        select(func.count()).where(Candidate.position_id == position.id)
+        select(func.count(func.distinct(Candidate.id)))
+        .select_from(Candidate)
+        .outerjoin(Application, Application.candidate_id == Candidate.id)
+        .where(
+            or_(
+                Candidate.position_id == position.id,
+                Application.position_id == position.id,
+            )
+        )
     )
     count = count_result.scalar()
 
@@ -257,7 +277,15 @@ async def update_position(
         logger.warning("audit_log_failed", action="update_position", error=str(e))
 
     count_result = await db.execute(
-        select(func.count()).where(Candidate.position_id == position.id)
+        select(func.count(func.distinct(Candidate.id)))
+        .select_from(Candidate)
+        .outerjoin(Application, Application.candidate_id == Candidate.id)
+        .where(
+            or_(
+                Candidate.position_id == position.id,
+                Application.position_id == position.id,
+            )
+        )
     )
     count = count_result.scalar()
 

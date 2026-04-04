@@ -26,6 +26,7 @@ from app.core.config import get_settings
 from app.core.database import async_session, get_db
 from app.core.dependencies import check_free_tier_limit, get_tenant_id, require_role
 from app.models.analysis import Analysis
+from app.models.application import Application
 from app.models.candidate import Candidate
 from app.models.consent import Consent
 from app.models.interview import Interview
@@ -95,8 +96,15 @@ async def list_all_candidates(
         count_query = count_query.where(Candidate.pipeline_status == status_filter)
 
     if position_id:
-        query = query.where(Candidate.position_id == position_id)
-        count_query = count_query.where(Candidate.position_id == position_id)
+        # Include candidates linked via Application table OR direct position_id
+        from sqlalchemy import exists
+        app_exists = exists().where(
+            Application.candidate_id == Candidate.id,
+            Application.position_id == position_id,
+        )
+        pos_filter = or_(Candidate.position_id == position_id, app_exists)
+        query = query.where(pos_filter)
+        count_query = count_query.where(pos_filter)
 
     if unread:
         query = query.where(Candidate.viewed_at.is_(None))
@@ -164,11 +172,19 @@ async def list_candidates(
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Poste introuvable")
 
+    # Include candidates linked via Application table OR direct position_id
+    from sqlalchemy import exists
+    app_exists = exists().where(
+        Application.candidate_id == Candidate.id,
+        Application.position_id == position_id,
+    )
+    pos_filter = or_(Candidate.position_id == position_id, app_exists)
+
     query = (
         select(Candidate, func.count(Interview.id).label("interview_count"))
         .outerjoin(Interview, Candidate.id == Interview.candidate_id)
         .where(
-            Candidate.position_id == position_id,
+            pos_filter,
             Candidate.tenant_id == tenant_id,
         )
         .group_by(Candidate.id)
@@ -177,7 +193,7 @@ async def list_candidates(
         select(func.count())
         .select_from(Candidate)
         .where(
-            Candidate.position_id == position_id,
+            pos_filter,
             Candidate.tenant_id == tenant_id,
         )
     )
@@ -492,6 +508,7 @@ async def get_candidate(
         profile_suggestions=candidate.profile_suggestions,
         tags=candidate.tags,
         notes=candidate.notes,
+        summary_json=candidate.summary_json,
     )
 
 
@@ -692,6 +709,7 @@ async def update_candidate(
         profile_suggestions=candidate.profile_suggestions,
         tags=candidate.tags,
         notes=candidate.notes,
+        summary_json=candidate.summary_json,
     )
 
 

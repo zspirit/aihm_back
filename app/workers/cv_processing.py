@@ -118,6 +118,43 @@ def process_cv(self, candidate_id: str, position_id: str | None = None, bulk_imp
             candidate.pipeline_status = "cv_analyzed"
 
         session.commit()
+
+        # Generate AI summary (non-critical, best-effort)
+        try:
+            from app.services.candidate_summary import generate_candidate_summary
+
+            candidate_data = {
+                "name": candidate.name,
+                "cv_parsed_data": candidate.cv_parsed_data,
+                "cv_score": candidate.cv_score,
+                "profile_score": candidate.profile_score,
+            }
+            position_data = None
+            if position:
+                position_data = {
+                    "title": position.title,
+                    "required_skills": position.required_skills,
+                    "seniority_level": position.seniority_level,
+                }
+            summary = generate_candidate_summary(
+                candidate=candidate_data,
+                position=position_data,
+            )
+            candidate.summary_json = summary
+            session.commit()
+            logger.info("cv_summary_generated", candidate_id=candidate_id)
+        except Exception as summary_exc:
+            logger.warning(
+                "cv_summary_generation_failed",
+                candidate_id=candidate_id,
+                error=str(summary_exc),
+            )
+            try:
+                session.rollback()
+                session.refresh(candidate)
+            except Exception:
+                pass
+
         success = True
         logger.info(
             "cv_processing_done",
