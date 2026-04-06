@@ -36,9 +36,15 @@ def process_cv(self, candidate_id: str, position_id: str | None = None, bulk_imp
         if candidate.position_id and not position:
             logger.warning("position_not_found", position_id=str(candidate.position_id))
 
-        # Parse CV
+        # Parse CV + quality score in ONE Claude call
         parsed_data = parse_cv_file(candidate.cv_file_path)
         candidate.cv_parsed_data = {**(candidate.cv_parsed_data or {}), **parsed_data}
+
+        # Extract quality_score from the merged parse response
+        quality_data = parsed_data.pop("quality_score", None) or {}
+        candidate.profile_score = quality_data.get("score", 0)
+        candidate.profile_score_explanation = quality_data.get("explanation")
+        logger.info("profile_score_computed", candidate_id=candidate_id, score=candidate.profile_score)
 
         # Load tenant scoring weights
         from app.models.tenant import Tenant
@@ -49,13 +55,7 @@ def process_cv(self, candidate_id: str, position_id: str | None = None, bulk_imp
             "education": tenant.scoring_education_weight if tenant else 20,
         }
 
-        # Step 1: ALWAYS compute profile_score (intrinsic CV quality)
-        quality_result = score_cv_quality(parsed_data)
-        candidate.profile_score = quality_result["score"]
-        candidate.profile_score_explanation = quality_result.get("explanation")
-        logger.info("profile_score_computed", candidate_id=candidate_id, score=quality_result["score"])
-
-        # Step 2: Score against positions via Applications
+        # Score against positions via Applications (parallel if multiple)
         from app.models.application import Application
         applications = session.query(Application).filter(
             Application.candidate_id == candidate.id
@@ -63,44 +63,48 @@ def process_cv(self, candidate_id: str, position_id: str | None = None, bulk_imp
 
         auto_advanced = False
         if applications:
-            # Score CV against each position linked via Application
-            primary_score_set = False
+            # Preload all positions at once
+            positions_map = {}
             for app in applications:
-                app_position = session.get(Position, app.position_id)
-                if not app_position:
-                    continue
-                score_result = score_cv(parsed_data, app_position, weights=scoring_weights)
-                app.match_score = score_result["score"]
-                app.match_score_explanation = score_result.get("explanation")
-                logger.info(
-                    "application_match_scored",
-                    candidate_id=candidate_id,
-                    position_id=str(app.position_id),
-                    score=score_result["score"],
-                )
-                # Set candidate.cv_score from the primary position (position_id) for compat
-                if app.position_id == candidate.position_id and not primary_score_set:
-                    candidate.cv_score = score_result["score"]
-                    candidate.cv_score_explanation = score_result.get("explanation")
-                    primary_score_set = True
+                if app.position_id not in positions_map:
+                    positions_map[app.position_id] = session.get(Position, app.position_id)
 
-            # If no application matched the primary position_id, use first application score
-            if not primary_score_set and applications:
-                first_scored = next(
-                    (a for a in applications if a.match_score is not None), None
-                )
-                if first_scored:
-                    candidate.cv_score = first_scored.match_score
-                    candidate.cv_score_explanation = first_scored.match_score_explanation
+            # Parallel scoring with ThreadPoolExecutor
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            def _score_one(app_pos_pair):
+                a, p = app_pos_pair
+                if not p:
+                    return a, None
+                return a, score_cv(parsed_data, p, weights=scoring_weights)
+
+            pairs = [(a, positions_map.get(a.position_id)) for a in applications]
+            with ThreadPoolExecutor(max_workers=min(len(pairs), 4)) as executor:
+                futures = {executor.submit(_score_one, pair): pair for pair in pairs}
+                for future in as_completed(futures):
+                    app, score_result = future.result()
+                    if score_result:
+                        app.match_score = score_result["score"]
+                        app.match_score_explanation = score_result.get("explanation")
+                        logger.info("application_match_scored", candidate_id=candidate_id,
+                                    position_id=str(app.position_id), score=score_result["score"])
+
+            # Set candidate.cv_score from primary position for compat
+            primary = next((a for a in applications if a.position_id == candidate.position_id and a.match_score is not None), None)
+            if not primary:
+                primary = next((a for a in applications if a.match_score is not None), None)
+            if primary:
+                candidate.cv_score = primary.match_score
+                candidate.cv_score_explanation = primary.match_score_explanation
+            else:
+                candidate.cv_score = candidate.profile_score
+                candidate.cv_score_explanation = candidate.profile_score_explanation
         elif position:
-            # Legacy path: position_id set but no Application rows — score directly
             score_result = score_cv(parsed_data, position, weights=scoring_weights)
             candidate.cv_score = score_result["score"]
             candidate.cv_score_explanation = score_result.get("explanation")
         else:
-            # Vivier: no position at all — cv_score = profile_score for compat
-            candidate.cv_score = quality_result["score"]
-            candidate.cv_score_explanation = quality_result.get("explanation")
+            candidate.cv_score = candidate.profile_score
+            candidate.cv_score_explanation = candidate.profile_score_explanation
 
         # Step 3: Workflow automation (based on primary position)
         cv_score = candidate.cv_score
@@ -119,41 +123,41 @@ def process_cv(self, candidate_id: str, position_id: str | None = None, bulk_imp
 
         session.commit()
 
-        # Generate AI summary (non-critical, best-effort)
+        # Generate summary from parsed data (no extra Claude call)
         try:
-            from app.services.candidate_summary import generate_candidate_summary
+            cv = candidate.cv_parsed_data or {}
+            skills = cv.get("skills", [])[:8]
+            exp_years = cv.get("experience_years", "?")
+            summary_text = cv.get("summary", "")
+            top_exp = cv.get("experiences", [{}])[0] if cv.get("experiences") else {}
 
-            candidate_data = {
-                "name": candidate.name,
-                "cv_parsed_data": candidate.cv_parsed_data,
-                "cv_score": candidate.cv_score,
-                "profile_score": candidate.profile_score,
+            strengths = []
+            if skills:
+                strengths.append(", ".join(skills[:3]))
+            if top_exp.get("title"):
+                strengths.append(f"{top_exp['title']} @ {top_exp.get('company', '?')}")
+            if exp_years and exp_years != "?":
+                strengths.append(f"{exp_years} ans d'experience")
+
+            concerns = []
+            if not cv.get("email") and not cv.get("phone"):
+                concerns.append("Pas de coordonnees")
+            if candidate.profile_score and candidate.profile_score < 40:
+                concerns.append("Profil a approfondir")
+
+            score = candidate.profile_score or candidate.cv_score or 0
+            reco = "go" if score >= 70 else "to_deepen" if score >= 40 else "no_go"
+
+            candidate.summary_json = {
+                "pitch": summary_text or f"Profil avec {exp_years} ans d'experience",
+                "strengths": strengths[:3],
+                "concerns": concerns[:2],
+                "overall_score": round(score),
+                "recommendation": reco,
             }
-            position_data = None
-            if position:
-                position_data = {
-                    "title": position.title,
-                    "required_skills": position.required_skills,
-                    "seniority_level": position.seniority_level,
-                }
-            summary = generate_candidate_summary(
-                candidate=candidate_data,
-                position=position_data,
-            )
-            candidate.summary_json = summary
             session.commit()
-            logger.info("cv_summary_generated", candidate_id=candidate_id)
-        except Exception as summary_exc:
-            logger.warning(
-                "cv_summary_generation_failed",
-                candidate_id=candidate_id,
-                error=str(summary_exc),
-            )
-            try:
-                session.rollback()
-                session.refresh(candidate)
-            except Exception:
-                pass
+        except Exception:
+            pass
 
         success = True
         logger.info(
@@ -282,8 +286,8 @@ def parse_docx(content: bytes) -> dict:
 
 
 def extract_structured_data(text: str) -> dict:
+    """Parse CV AND compute quality score in a single Claude call."""
     from anthropic import Anthropic
-
     from app.core.config import get_settings
 
     settings = get_settings()
@@ -291,12 +295,12 @@ def extract_structured_data(text: str) -> dict:
 
     response = client.messages.create(
         model=settings.ANTHROPIC_MODEL,
-        max_tokens=1500,
+        max_tokens=2500,
         timeout=60.0,
         messages=[
             {
                 "role": "user",
-                "content": f"""Extrais les informations structurees de ce CV. Reponds UNIQUEMENT en JSON valide.
+                "content": f"""Extrais les informations structurees de ce CV ET evalue sa qualite intrinseque. Reponds UNIQUEMENT en JSON valide.
 
 CV:
 {text[:4000]}
@@ -315,15 +319,30 @@ Format JSON attendu:
         {{"degree": "diplome", "school": "ecole", "year": "annee"}}
     ],
     "languages": ["francais", "anglais"],
-    "summary": "resume en 2-3 phrases"
-}}""",
+    "summary": "resume en 2-3 phrases",
+    "quality_score": {{
+        "score": 65,
+        "explanation": {{
+            "technical_depth": {{"score": 70, "justification": "..."}},
+            "experience_quality": {{"score": 60, "justification": "..."}},
+            "education_relevance": {{"score": 65, "justification": "..."}},
+            "cv_completeness": {{"score": 70, "justification": "..."}}
+        }}
+    }}
+}}
+
+CRITERES quality_score (0-100):
+- technical_depth (30%): competences demontrees en projet concret
+- experience_quality (30%): progression, impact mesurable
+- education_relevance (20%): diplomes, certifications
+- cv_completeness (20%): structure, infos de contact
+Score global = moyenne ponderee. Penaliser le keyword stuffing.""",
             }
         ],
     )
 
     try:
         text_content = response.content[0].text
-        # Extract JSON from response
         if "```json" in text_content:
             text_content = text_content.split("```json")[1].split("```")[0]
         elif "```" in text_content:
