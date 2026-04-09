@@ -93,6 +93,7 @@ from app.api.v1.interviews import router as interviews_router
 from app.api.v1.positions import router as positions_router
 from app.api.v1.webhooks import router as webhooks_router
 from app.api.v1.webhooks_config import router as webhooks_config_router
+from app.api.v1.webhooks_conversation import router as webhooks_conv_router
 from app.api.v1.notifications import router as notifications_router
 from app.api.v1.bulk_import import router as bulk_import_router
 from app.api.v1.bulk_import import candidates_router as bulk_candidates_router
@@ -111,6 +112,7 @@ app.include_router(interviews_router, prefix=settings.API_V1_PREFIX)
 app.include_router(consent_router, prefix=settings.API_V1_PREFIX)
 app.include_router(webhooks_router, prefix=settings.API_V1_PREFIX)
 app.include_router(webhooks_config_router, prefix=settings.API_V1_PREFIX)
+app.include_router(webhooks_conv_router, prefix=settings.API_V1_PREFIX)
 app.include_router(analytics_router, prefix=settings.API_V1_PREFIX)
 app.include_router(copilot_router, prefix=settings.API_V1_PREFIX)
 app.include_router(notifications_router, prefix=settings.API_V1_PREFIX)

@@ -103,7 +103,7 @@ def generate_interview_questions(candidate, position) -> list[dict]:
             {
                 "role": "user",
                 "content": f"""Genere des questions d'entretien telephonique pour ce candidat.
-L'entretien dure 5 minutes max, donc 4 a 6 questions.
+L'entretien dure 5 minutes max, donc exactement 3 questions.
 
 FICHE DE POSTE:
 - Titre: {position.title}

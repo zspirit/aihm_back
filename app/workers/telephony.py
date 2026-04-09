@@ -40,13 +40,38 @@ def initiate_call(self, interview_id: str):
         questions = generate_interview_questions(candidate, position)
         interview.questions_asked = questions
 
-        # Initiate Twilio call
+        # Pre-generate TTS audio for the interview
+        import asyncio
+
+        from app.services.tts_service import pre_generate_interview_audio
+
+        try:
+            tts_urls = asyncio.run(
+                pre_generate_interview_audio(
+                    interview_id=interview_id,
+                    candidate_name=candidate.name or "candidat",
+                    questions=questions,
+                    voice=settings.TTS_VOICE,
+                )
+            )
+            interview.tts_audio_urls = tts_urls
+            logger.info("tts_audio_pre_generated", interview_id=interview_id, num_urls=len(tts_urls))
+        except Exception as e:
+            logger.error(
+                "tts_audio_generation_failed",
+                interview_id=interview_id,
+                error=str(e),
+            )
+            # Fallback: continue without pre-generated audio (will use Polly in TwiML)
+            interview.tts_audio_urls = None
+
+        # Initiate Twilio call (using new conversational webhook)
         from twilio.rest import Client
 
         client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
 
         twiml_url = (
-            f"{settings.TWILIO_WEBHOOK_BASE_URL}/api/v1/webhooks/twilio/voice"
+            f"{settings.TWILIO_WEBHOOK_BASE_URL}/api/v1/webhooks/conv/voice"
             f"?interview_id={interview_id}"
         )
 

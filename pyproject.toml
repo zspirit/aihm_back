@@ -31,6 +31,7 @@ dependencies = [
     "sentry-sdk[fastapi]>=2.0.0",
     "slowapi>=0.1.9",
     "reportlab>=4.2.0",
+    "edge-tts>=6.1.9",
 ]
 
 [project.optional-dependencies]
@@ -54,6 +55,7 @@ select = ["E", "F", "I", "N", "W"]
 
 [tool.ruff.lint.per-file-ignores]
 "app/api/v1/webhooks.py" = ["N803", "E501"]
+"app/api/v1/webhooks_conversation.py" = ["N803", "E501"]
 "app/main.py" = ["E402"]
 "app/workers/*" = ["E501"]
 "tests/*" = ["E402"]

@@ -25,6 +25,7 @@ class Settings(BaseSettings):
 
     # MinIO / S3
     S3_ENDPOINT: str = "http://localhost:9000"
+    S3_EXTERNAL_ENDPOINT: str = ""
     S3_ACCESS_KEY: str = "minioadmin"
     S3_SECRET_KEY: str = "minioadmin"
     S3_BUCKET_CVS: str = "cvs"
@@ -49,6 +50,20 @@ class Settings(BaseSettings):
     WHISPER_MODEL: str = "large-v3"
     WHISPER_DEVICE: str = "cpu"
     WHISPER_COMPUTE_TYPE: str = "int8"
+
+    # TTS (Conversation)
+    TTS_VOICE: str = "fr-FR-HenriNeural"
+    TTS_BUCKET: str = "tts-audio"
+    TTS_PRESIGNED_URL_EXPIRY: int = 7200
+    TTS_RATE: str = "-5%"
+
+    # Safety Classifier (Conversation)
+    SAFETY_MODEL: str = "claude-haiku-4-5-20250929"
+    SAFETY_MAX_TOKENS: int = 100
+
+    # Conversation Settings
+    CONVERSATION_MAX_RETRIES: int = 2
+    CONVERSATION_GATHER_TIMEOUT: int = 5
 
     # Sentry
     SENTRY_DSN: str = ""

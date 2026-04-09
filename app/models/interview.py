@@ -23,6 +23,8 @@ class Interview(Base):
     audio_file_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     call_provider_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     questions_asked: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    tts_audio_urls: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    conversation_metrics: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     attempt_number: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
