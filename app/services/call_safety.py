@@ -119,6 +119,14 @@ async def classify_answer(
         # Parse the JSON response
         try:
             response_text = response.content[0].text.strip()
+
+            # Handle markdown code blocks (Claude sometimes wraps JSON in ```)
+            if response_text.startswith("```"):
+                response_text = response_text.split("```")[1]
+                if response_text.startswith("json\n"):
+                    response_text = response_text[5:]
+                response_text = response_text.strip()
+
             result_json = json.loads(response_text)
 
             label_str = result_json.get("label", "normal").lower()
