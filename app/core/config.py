@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     TTS_RATE: str = "-5%"
 
     # Safety Classifier (Conversation)
-    SAFETY_MODEL: str = "claude-haiku-4-5-20250929"
+    SAFETY_MODEL: str = "claude-haiku-4-5-20251001"
     SAFETY_MAX_TOKENS: int = 100
 
     # Conversation Settings
