@@ -96,7 +96,10 @@ async def schedule_interview(
 
     from app.workers.telephony import initiate_call
 
-    initiate_call.delay(str(interview.id))
+    if data.scheduled_at:
+        initiate_call.apply_async(args=[str(interview.id)], eta=data.scheduled_at)
+    else:
+        initiate_call.delay(str(interview.id))
 
     return InterviewResponse(
         id=str(interview.id),
