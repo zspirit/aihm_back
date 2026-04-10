@@ -60,9 +60,9 @@ SCORING GUIDELINES:
 
 DECISION RULES:
 1. If relevance_score < 40 → label="poor"
-2. If relevance_score >= 40 AND relevance_score < 70 AND depth_score < 50 → label="medium"
-3. If relevance_score >= 70 AND depth_score >= 50 → label="good"
-4. If relevance_score >= 70 BUT depth_score < 50 → label="medium"
+2. If relevance_score >= 70 → label="good" (clear, direct answer)
+3. If relevance_score >= 40 AND relevance_score < 70 → label="medium" (partial or vague)
+4. Exception: If relevance_score >= 70 AND depth_score < 30 → label="medium" (too brief)
 
 CRITICAL:
 - Be fair but firm like a real HR would be

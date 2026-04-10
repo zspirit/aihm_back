@@ -203,8 +203,11 @@ async def conversation_answer_handler(
     # Decide action based on safety and quality
     action = decide_action(safety_result, retry_count, settings.CONVERSATION_MAX_RETRIES)
 
+    # If off-scope (user asked a question), treat it like poor quality (ask confirmation)
+    if safety_result.label.value == "off_scope":
+        action = "confirm_reask"  # Override redirect with confirmation prompt
     # Override action if quality is poor (ask for confirmation and repose)
-    if quality_result and quality_result.label == AnswerQuality.POOR:
+    elif quality_result and quality_result.label == AnswerQuality.POOR:
         action = "confirm_reask"  # Custom action for poor quality
     elif quality_result and quality_result.label == AnswerQuality.MEDIUM:
         action = "clarify_reask"  # Custom action for medium quality
