@@ -48,21 +48,27 @@ VALID LABELS (only one):
 - "medium" : Response partially addresses the question or lacks depth/examples
 - "poor"   : Response is irrelevant, off-topic, or doesn't address the question at all
 
-SCORING GUIDELINES:
-- relevance_score (0-100): How directly does it answer the question asked?
-  - 0: Completely unrelated (talking about weather when asked about experience)
-  - 50: Partially related or unclear connection
-  - 100: Directly and clearly addresses the question
-- depth_score (0-100): Is the answer detailed enough?
-  - 0: One word or vague
-  - 50: Basic answer, could use more detail
-  - 100: Comprehensive with examples or specifics
+SCORING GUIDELINES (Relevance is the PRIMARY metric):
+- relevance_score (0-100): Does the answer directly address the question?
+  - 0-20: Completely unrelated (weather talk when asked about experience)
+  - 30-50: Tangentially related but vague or unclear
+  - 60-70: Related but somewhat vague
+  - 80-100: Directly answers the question with specifics (e.g., "5 years in Python" answers "experience?" perfectly)
 
-DECISION RULES:
-1. If relevance_score < 40 → label="poor"
-2. If relevance_score >= 70 → label="good" (clear, direct answer)
-3. If relevance_score >= 40 AND relevance_score < 70 → label="medium" (partial or vague)
-4. Exception: If relevance_score >= 70 AND depth_score < 30 → label="medium" (too brief)
+- depth_score (0-100): Is there detail/examples? (SECONDARY)
+  - 0-30: Very brief but potentially relevant
+  - 40-60: Some detail provided
+  - 70-100: Comprehensive with examples or specifics
+
+IMPORTANT: A brief but directly relevant answer (e.g., "5 years Python" = 85 relevance, 40 depth) = GOOD
+           A vague but lengthy answer (e.g., "I worked in tech for a while doing stuff" = 50 relevance, 60 depth) = MEDIUM
+
+DECISION RULES (Relevance is PRIMARY):
+1. If relevance_score < 40 → label="poor" (irrelevant answer)
+2. If relevance_score >= 70 → label="good" (directly addresses the question - this is the main metric)
+3. If relevance_score >= 40 AND relevance_score < 70 → label="medium" (partially relevant or unclear)
+
+NOTE: Depth score is informational only. A brief but perfectly relevant answer (e.g., "5 years in Python" to "tell me about your experience") is GOOD.
 
 CRITICAL:
 - Be fair but firm like a real HR would be
