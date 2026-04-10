@@ -197,4 +197,20 @@ async def grant_consent_admin(
 
     candidate.pipeline_status = "consent_given"
     await db.commit()
+
+    # Verify both consents were created/updated
+    verify_result = await db.execute(
+        select(Consent).where(
+            Consent.candidate_id == candidate_id,
+            Consent.granted.is_(True),
+        )
+    )
+    granted_consents = [c.type for c in verify_result.scalars().all()]
+    if "data_processing" not in granted_consents or "call_recording" not in granted_consents:
+        logger.error(
+            "consent_incomplete_after_grant",
+            candidate_id=str(candidate_id),
+            granted_types=granted_consents,
+        )
+
     return {"status": "ok", "message": "Consentements accordés (data_processing + call_recording)"}
