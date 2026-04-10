@@ -10,7 +10,6 @@ from app.core.config import get_settings
 from app.core.database import async_session
 from app.models.interview import Interview
 from app.services.call_safety import classify_answer, decide_action
-from app.services.answer_evaluator import evaluate_answer, AnswerQuality
 
 logger = structlog.get_logger()
 
@@ -191,26 +190,13 @@ async def conversation_answer_handler(
         question_text=question_text,
     )
 
-    # Evaluate answer quality (only if safety check passed)
-    quality_result = None
-    if safety_result.label.value == "normal" and SpeechResult.strip():
-        quality_result = await evaluate_answer(
-            speech_result=SpeechResult,
-            question_text=question_text,
-            question_id=question_idx,
-        )
-
-    # Decide action based on safety and quality
+    # Decide action based on safety check only (simplified for better UX)
+    # TODO: Add quality evaluation in post-processing (after transcription)
     action = decide_action(safety_result, retry_count, settings.CONVERSATION_MAX_RETRIES)
 
-    # If off-scope (user asked a question), treat it like poor quality (ask confirmation)
+    # If off-scope (user asked a question), ask for confirmation
     if safety_result.label.value == "off_scope":
-        action = "confirm_reask"  # Override redirect with confirmation prompt
-    # Override action if quality is poor (ask for confirmation and repose)
-    elif quality_result and quality_result.label == AnswerQuality.POOR:
-        action = "confirm_reask"  # Custom action for poor quality
-    elif quality_result and quality_result.label == AnswerQuality.MEDIUM:
-        action = "clarify_reask"  # Custom action for medium quality
+        action = "confirm_reask"  # Ask if they want to submit that response
 
     # Persist metric
     metric = {
@@ -223,9 +209,6 @@ async def conversation_answer_handler(
         "retry_count": retry_count,
         "safety_classification": safety_result.label.value,
         "safety_confidence": safety_result.confidence,
-        "answer_quality": quality_result.label.value if quality_result else "not_evaluated",
-        "quality_relevance_score": quality_result.relevance_score if quality_result else 0,
-        "quality_depth_score": quality_result.depth_score if quality_result else 0,
         "action_taken": action,
         "answered_at_utc": datetime.now(timezone.utc).isoformat(),
     }
@@ -281,46 +264,12 @@ async def conversation_answer_handler(
         )
         return _build_twiml_response(twiml)
 
-    # Handle medium quality: ask for clarification
-    if action == "clarify_reask":
-        clarify_text = (
-            f"Merci pour votre réponse. Pouvez-vous préciser davantage? "
-            f"{question_text}"
-        )
-        twiml = (
-            "<Response>"
-            f'  <Gather input="speech" timeout="{timeout + 3}" speechTimeout="auto" '
-            f'language="fr-FR" '
-            f'action="/api/v1/webhooks/conv/answer?interview_id={interview_id}&amp;question_idx={question_idx}&amp;retry_count={retry_count + 1}" '
-            f'method="POST">'
-            f'    <Say language="fr-FR" voice="Polly.Lea">{_escape_xml(clarify_text)}</Say>'
-            f"  </Gather>"
-            f'  <Redirect>/api/v1/webhooks/conv/answer?interview_id={interview_id}&amp;question_idx={question_idx}&amp;retry_count={retry_count + 1}</Redirect>'
-            "</Response>"
-        )
-        logger.info(
-            "clarify_reask_twiml_returned",
-            interview_id=interview_id,
-            question_idx=question_idx,
-            reason="medium_quality",
-        )
-        return _build_twiml_response(twiml)
-
     if action == "retry" and retry_count < settings.CONVERSATION_MAX_RETRIES:
-        # Retry same question with off-scope message
-        # Check if this is due to off-scope (user asking questions instead of answering)
-        is_off_scope = safety_result.label.value == "off_scope"
-
-        if is_off_scope:
-            retry_text = (
-                "Je suis désolé, je ne peux pas répondre à cette question. "
-                f"Revenons à l'entretien. {question_text}"
-            )
-        else:
-            retry_text = (
-                f"Je n'ai pas bien entendu votre réponse. "
-                f"Pourriez-vous répéter ? {question_text}"
-            )
+        # Retry same question (empty or low confidence)
+        retry_text = (
+            f"Je n'ai pas bien entendu votre réponse. "
+            f"Pourriez-vous répéter ? {question_text}"
+        )
 
         twiml = (
             "<Response>"
@@ -338,7 +287,6 @@ async def conversation_answer_handler(
             interview_id=interview_id,
             question_idx=question_idx,
             retry_count=retry_count + 1,
-            reason="off_scope" if is_off_scope else "unclear",
         )
         return _build_twiml_response(twiml)
 
