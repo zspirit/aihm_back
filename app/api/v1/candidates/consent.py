@@ -168,13 +168,31 @@ async def grant_consent_admin(
 
     from datetime import datetime, timezone
 
-    consents_result = await db.execute(select(Consent).where(Consent.candidate_id == candidate_id))
-    consents = consents_result.scalars().all()
-    for consent in consents:
-        if not consent.granted:
+    # Ensure both required consent types exist and are granted
+    for consent_type in ["data_processing", "call_recording"]:
+        consent_result = await db.execute(
+            select(Consent).where(
+                Consent.candidate_id == candidate_id,
+                Consent.type == consent_type,
+            )
+        )
+        consent = consent_result.scalar_one_or_none()
+        if not consent:
+            # Create if doesn't exist
+            consent = Consent(
+                candidate_id=candidate_id,
+                type=consent_type,
+                granted=True,
+                granted_at=datetime.now(timezone.utc),
+                channel="admin",
+            )
+            db.add(consent)
+        else:
+            # Update existing
             consent.granted = True
             consent.granted_at = datetime.now(timezone.utc)
             consent.channel = "admin"
 
     candidate.pipeline_status = "consent_given"
-    return {"status": "ok", "consents_granted": len(consents)}
+    await db.commit()
+    return {"status": "ok", "message": "Consentements accordés (data_processing + call_recording)"}
