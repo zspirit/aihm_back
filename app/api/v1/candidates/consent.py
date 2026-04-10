@@ -169,6 +169,7 @@ async def grant_consent_admin(
     from datetime import datetime, timezone
 
     # Ensure both required consent types exist and are granted
+    import uuid as _uuid
     for consent_type in ["data_processing", "call_recording"]:
         consent_result = await db.execute(
             select(Consent).where(
@@ -182,6 +183,7 @@ async def grant_consent_admin(
             consent = Consent(
                 candidate_id=candidate_id,
                 type=consent_type,
+                token=str(_uuid.uuid4()),
                 granted=True,
                 granted_at=datetime.now(timezone.utc),
                 channel="admin",
