@@ -197,13 +197,15 @@ def decide_action(
         return "continue"
 
     if safety_result.label == SafetyLabel.INJECTION:
-        # Hard stop probing: redirect immediately
+        # Hard stop probing: redirect immediately to next question
         return "redirect"
 
     if safety_result.label == SafetyLabel.OFF_SCOPE:
         # User asked a question or made a request instead of answering
-        # Redirect immediately with off-scope message, skip retry
-        return "redirect"
+        # Retry up to max_retries, then skip to next question
+        if retry_count < max_retries:
+            return "retry"
+        return "skip"
 
     if safety_result.label == SafetyLabel.LOW_CONFIDENCE:
         # Low confidence: retry up to max, then continue anyway

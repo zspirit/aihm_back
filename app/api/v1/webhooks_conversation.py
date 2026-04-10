@@ -234,11 +234,21 @@ async def conversation_answer_handler(
     timeout = settings.CONVERSATION_GATHER_TIMEOUT
 
     if action == "retry" and retry_count < settings.CONVERSATION_MAX_RETRIES:
-        # Retry same question
-        retry_text = (
-            f"Je n'ai pas bien entendu votre réponse. "
-            f"Pourriez-vous répéter ? {question_text}"
-        )
+        # Retry same question with off-scope message
+        # Check if this is due to off-scope (user asking questions instead of answering)
+        is_off_scope = safety_result.label.value == "off_scope"
+
+        if is_off_scope:
+            retry_text = (
+                "Je suis désolé, je ne peux pas répondre à cette question. "
+                f"Revenons à l'entretien. {question_text}"
+            )
+        else:
+            retry_text = (
+                f"Je n'ai pas bien entendu votre réponse. "
+                f"Pourriez-vous répéter ? {question_text}"
+            )
+
         twiml = (
             "<Response>"
             f'  <Gather input="speech" timeout="{timeout + 3}" speechTimeout="auto" '
@@ -255,6 +265,7 @@ async def conversation_answer_handler(
             interview_id=interview_id,
             question_idx=question_idx,
             retry_count=retry_count + 1,
+            reason="off_scope" if is_off_scope else "unclear",
         )
         return _build_twiml_response(twiml)
 
