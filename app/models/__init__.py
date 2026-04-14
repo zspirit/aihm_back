@@ -3,7 +3,9 @@ from app.models.application import Application
 from app.models.audit_log import AuditLog
 from app.models.candidate import Candidate
 from app.models.consent import Consent
+from app.models.enterprise import Enterprise
 from app.models.interview import Interview
+from app.models.offer import Offer
 from app.models.position import Position
 from app.models.report import Report
 from app.models.tenant import Tenant
@@ -21,6 +23,8 @@ __all__ = [
     "Tenant",
     "User",
     "Position",
+    "Enterprise",
+    "Offer",
     "Candidate",
     "Application",
     "Consent",

@@ -26,3 +26,4 @@ class Application(Base):
     # Relationships
     candidate = relationship("Candidate", back_populates="applications")
     position = relationship("Position", back_populates="applications")
+    offers = relationship("Offer", back_populates="application", cascade="all, delete-orphan")

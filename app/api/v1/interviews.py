@@ -623,3 +623,43 @@ async def get_scorecards(
         )
 
     return ScorecardListResponse(scorecards=items, aggregated=aggregated)
+
+
+@router.put(
+    "/interviews/{interview_id}/reschedule",
+    response_model=InterviewResponse,
+)
+async def reschedule_interview(
+    interview_id: UUID,
+    new_scheduled_at: datetime,
+    tenant_id: UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reschedule an interview to a new date/time."""
+    result = await db.execute(
+        select(Interview).where(Interview.id == interview_id, Interview.tenant_id == tenant_id)
+    )
+    interview = result.scalar_one_or_none()
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview introuvable")
+
+    if interview.status not in ["scheduled", "pending"]:
+        raise HTTPException(status_code=400, detail="L'entretien ne peut pas etre reprogramme dans cet etat")
+
+    interview.scheduled_at = new_scheduled_at
+    await db.commit()
+    await db.refresh(interview)
+
+    return InterviewResponse(
+        id=str(interview.id),
+        candidate_id=str(interview.candidate_id),
+        position_id=str(interview.position_id),
+        status=interview.status,
+        scheduled_at=interview.scheduled_at,
+        started_at=interview.started_at,
+        ended_at=interview.ended_at,
+        duration_seconds=interview.duration_seconds,
+        questions_asked=interview.questions_asked,
+        attempt_number=interview.attempt_number,
+        created_at=interview.created_at,
+    )

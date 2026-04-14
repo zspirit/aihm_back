@@ -13,6 +13,7 @@ class Position(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"))
+    enterprise_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("enterprises.id"), nullable=True)
     title: Mapped[str] = mapped_column(String(255))
     description: Mapped[str] = mapped_column(Text, default="")
     required_skills: Mapped[dict] = mapped_column(JSONB, default=list)
@@ -28,5 +29,6 @@ class Position(Base):
     )
 
     tenant = relationship("Tenant", back_populates="positions")
+    enterprise = relationship("Enterprise", back_populates="positions")
     candidates = relationship("Candidate", back_populates="position")
     applications = relationship("Application", back_populates="position", cascade="all, delete-orphan")
