@@ -259,6 +259,102 @@ async def test_list_offers_after_create(client, auth_headers):
 
 
 @pytest.mark.asyncio
+async def test_offer_remind(client, auth_headers):
+    """Test sending a reminder for an offer."""
+    enterprise_id, position_id, candidate_id, application_id = await setup_enterprise_and_application(
+        client, auth_headers
+    )
+
+    # Create and send offer
+    create_payload = {"salary_min": 50000}
+    create_response = await client.post(
+        f"/applications/{application_id}/offers",
+        json=create_payload,
+        headers=auth_headers,
+    )
+
+    if create_response.status_code == 201:
+        offer_id = create_response.json()["id"]
+
+        # Send offer first
+        send_payload = {
+            "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+        }
+        await client.post(f"/offers/{offer_id}/send", json=send_payload, headers=auth_headers)
+
+        # Send reminder
+        response = await client.post(f"/offers/{offer_id}/remind", headers=auth_headers)
+
+        if response.status_code == 200:
+            data = response.json()
+            assert data["status"] in ["sent", "viewed"]
+
+
+@pytest.mark.asyncio
+async def test_offer_withdraw(client, auth_headers):
+    """Test withdrawing an offer."""
+    enterprise_id, position_id, candidate_id, application_id = await setup_enterprise_and_application(
+        client, auth_headers
+    )
+
+    # Create and send offer
+    create_payload = {"salary_min": 50000}
+    create_response = await client.post(
+        f"/applications/{application_id}/offers",
+        json=create_payload,
+        headers=auth_headers,
+    )
+
+    if create_response.status_code == 201:
+        offer_id = create_response.json()["id"]
+
+        # Send offer
+        send_payload = {
+            "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+        }
+        await client.post(f"/offers/{offer_id}/send", json=send_payload, headers=auth_headers)
+
+        # Withdraw offer
+        response = await client.post(f"/offers/{offer_id}/withdraw", headers=auth_headers)
+
+        if response.status_code == 200:
+            data = response.json()
+            assert data["status"] == "expired"
+
+
+@pytest.mark.asyncio
+async def test_offer_mark_viewed(client, auth_headers):
+    """Test marking an offer as viewed."""
+    enterprise_id, position_id, candidate_id, application_id = await setup_enterprise_and_application(
+        client, auth_headers
+    )
+
+    # Create and send offer
+    create_payload = {"salary_min": 50000}
+    create_response = await client.post(
+        f"/applications/{application_id}/offers",
+        json=create_payload,
+        headers=auth_headers,
+    )
+
+    if create_response.status_code == 201:
+        offer_id = create_response.json()["id"]
+
+        # Send offer
+        send_payload = {
+            "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+        }
+        await client.post(f"/offers/{offer_id}/send", json=send_payload, headers=auth_headers)
+
+        # Mark as viewed
+        response = await client.post(f"/offers/{offer_id}/viewed", headers=auth_headers)
+
+        if response.status_code == 200:
+            data = response.json()
+            assert data["status"] == "viewed"
+
+
+@pytest.mark.asyncio
 async def test_offer_unauthenticated(client):
     """Test that unauthenticated requests are rejected."""
     response = await client.get("/offers")

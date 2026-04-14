@@ -196,3 +196,70 @@ async def reject_offer(
     await db.commit()
     await db.refresh(offer)
     return offer
+
+
+@router.post("/{offer_id}/remind", response_model=OfferResponse)
+async def remind_offer(
+    offer_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Send a reminder for an offer (resend signature link)."""
+    offer = await db.get(Offer, offer_id)
+    if not offer or offer.tenant_id != current_user.tenant_id:
+        raise HTTPException(status_code=404, detail="Offer not found")
+
+    if offer.status not in ["sent", "viewed"]:
+        raise HTTPException(status_code=400, detail="Can only remind for sent/viewed offers")
+
+    # Update sent_at to current time (indicates reminder sent)
+    offer.sent_at = datetime.now(timezone.utc)
+    offer.updated_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    await db.refresh(offer)
+    return offer
+
+
+@router.post("/{offer_id}/withdraw", response_model=OfferResponse)
+async def withdraw_offer(
+    offer_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Withdraw an offer (employer side cancellation)."""
+    offer = await db.get(Offer, offer_id)
+    if not offer or offer.tenant_id != current_user.tenant_id:
+        raise HTTPException(status_code=404, detail="Offer not found")
+
+    if offer.status in ["signed", "rejected", "expired"]:
+        raise HTTPException(status_code=400, detail="Cannot withdraw offer in current status")
+
+    # Mark as expired (employer withdrew)
+    offer.status = "expired"
+    offer.expires_at = datetime.now(timezone.utc)
+    offer.updated_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    await db.refresh(offer)
+    return offer
+
+
+@router.post("/{offer_id}/viewed", response_model=OfferResponse)
+async def mark_offer_viewed(
+    offer_id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark offer as viewed (webhook from signature provider)."""
+    offer = await db.get(Offer, offer_id)
+    if not offer:
+        raise HTTPException(status_code=404, detail="Offer not found")
+
+    if offer.status == "sent":
+        offer.status = "viewed"
+        offer.viewed_at = datetime.now(timezone.utc)
+        offer.updated_at = datetime.now(timezone.utc)
+        await db.commit()
+        await db.refresh(offer)
+
+    return offer
