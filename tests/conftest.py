@@ -170,3 +170,35 @@ async def admin_data(db_session):
 async def viewer_headers(db_session):
     headers, _, _ = await _create_user(db_session, "viewer@test.com", "viewer", "Viewer Corp")
     return headers
+
+
+@pytest_asyncio.fixture()
+async def test_user(db_session):
+    """Create a test user for model tests."""
+    from app.models.tenant import Tenant
+    from app.models.user import User
+
+    tenant = Tenant(name="Test Tenant")
+    db_session.add(tenant)
+    await db_session.flush()
+
+    user = User(
+        tenant_id=tenant.id,
+        email="test@test.com",
+        password_hash=hash_password("testpass123"),
+        full_name="Test User",
+        role="admin",
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+    return user
+
+
+@pytest_asyncio.fixture()
+async def test_tenant(db_session, test_user):
+    """Create a test tenant (uses test_user's tenant)."""
+    # Return the tenant from test_user
+    from app.models import Tenant
+    tenant = await db_session.get(Tenant, test_user.tenant_id)
+    return tenant
