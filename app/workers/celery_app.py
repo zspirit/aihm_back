@@ -33,5 +33,16 @@ celery_app.autodiscover_tasks(
         "app.workers.notifications",
         "app.workers.bulk_import",
         "app.workers.matching",
+        "app.workers.feedback",
+        "app.workers.purge",
     ]
 )
+
+from celery.schedules import crontab
+
+celery_app.conf.beat_schedule = {
+    "purge-expired-data-daily": {
+        "task": "purge.expired_data",
+        "schedule": crontab(hour=2, minute=0),
+    },
+}

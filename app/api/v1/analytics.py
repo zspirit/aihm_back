@@ -9,7 +9,7 @@ from sqlalchemy import Float, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_tenant_id
+from app.core.dependencies import get_tenant_id, require_module
 from app.models.analysis import Analysis
 from app.models.audit_log import AuditLog
 from app.models.candidate import Candidate
@@ -20,7 +20,7 @@ from app.models.user import User
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
 
-@router.get("/overview")
+@router.get("/overview", dependencies=[require_module("analytics")])
 async def overview(
     date_from: datetime | None = Query(None),
     date_to: datetime | None = Query(None),
@@ -92,7 +92,7 @@ async def overview(
     }
 
 
-@router.get("/pipeline")
+@router.get("/pipeline", dependencies=[require_module("analytics")])
 async def pipeline_breakdown(
     date_from: datetime | None = Query(None),
     date_to: datetime | None = Query(None),
@@ -113,7 +113,7 @@ async def pipeline_breakdown(
     return {row[0]: row[1] for row in result.all()}
 
 
-@router.get("/positions-stats")
+@router.get("/positions-stats", dependencies=[require_module("analytics")])
 async def positions_stats(
     date_from: datetime | None = Query(None),
     date_to: datetime | None = Query(None),
@@ -152,7 +152,7 @@ async def positions_stats(
     ]
 
 
-@router.get("/export")
+@router.get("/export", dependencies=[require_module("analytics")])
 async def export_csv(
     date_from: datetime | None = Query(None),
     date_to: datetime | None = Query(None),
@@ -202,7 +202,7 @@ async def export_csv(
     )
 
 
-@router.get("/timeline")
+@router.get("/timeline", dependencies=[require_module("analytics")])
 async def timeline(
     period: str = Query("week"),
     date_from: datetime | None = Query(None),
@@ -259,7 +259,7 @@ async def timeline(
     return timeline_data
 
 
-@router.get("/recruiters")
+@router.get("/recruiters", dependencies=[require_module("analytics")])
 async def recruiter_stats(
     date_from: datetime | None = Query(None),
     date_to: datetime | None = Query(None),
@@ -304,7 +304,7 @@ async def recruiter_stats(
     ]
 
 
-@router.get("/interview-quality")
+@router.get("/interview-quality", dependencies=[require_module("analytics")])
 async def interview_quality(
     date_from: datetime | None = Query(None),
     date_to: datetime | None = Query(None),

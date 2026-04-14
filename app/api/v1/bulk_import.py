@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import async_session, get_db
-from app.core.dependencies import get_tenant_id, require_role
+from app.core.dependencies import get_tenant_id, require_module, require_role
 from app.models.application import Application
 from app.models.bulk_import import BulkImport
 from app.models.candidate import Candidate
@@ -278,6 +278,7 @@ async def _collect_entries(files: List[UploadFile]) -> list[tuple[str, bytes]]:
     "/import-bulk/preview",
     response_model=ImportPreviewResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[require_module("bulk_import")],
 )
 async def import_bulk_preview(
     files: List[UploadFile] = File(...),
@@ -660,6 +661,7 @@ async def import_bulk_confirm(
     "/import-bulk",
     response_model=BulkImportBulkResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[require_module("bulk_import")],
 )
 async def import_bulk_cvs(
     files: List[UploadFile] = File(...),

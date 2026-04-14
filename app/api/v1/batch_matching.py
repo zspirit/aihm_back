@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import async_session, get_db
-from app.core.dependencies import get_tenant_id, require_role
+from app.core.dependencies import get_tenant_id, require_module, require_role
 from app.models.candidate import Candidate
 from app.models.match_score import MatchScore, MatchSession
 from app.models.position import Position
@@ -35,7 +35,7 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/matching", tags=["Batch Matching"])
 
 
-@router.post("/sessions", response_model=MatchSessionResponse, status_code=202)
+@router.post("/sessions", response_model=MatchSessionResponse, status_code=202, dependencies=[require_module("matching_nm")])
 async def create_match_session(
     body: MatchSessionCreate,
     current_user: User = Depends(require_role("admin", "recruiter")),

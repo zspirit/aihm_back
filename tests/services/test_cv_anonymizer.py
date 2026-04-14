@@ -5,6 +5,7 @@ from app.services.cv_anonymizer import (
     anonymize_candidate_data,
     _make_anonymous_id,
     _remove_personal_info_from_text,
+    _scrub_candidate_name,
     _scrub_names,
 )
 
@@ -83,6 +84,62 @@ class TestRemovePersonalInfo:
         assert "  " not in result
 
 
+class TestScrubCandidateName:
+    def test_removes_full_name(self):
+        text = "Jean Dupont is an engineer with 10 years experience."
+        result = _scrub_candidate_name(text, "Jean Dupont")
+        assert "Jean Dupont" not in result
+        assert "engineer" in result
+
+    def test_removes_individual_parts(self):
+        text = "Jean est un developpeur. Dupont a travaille chez X."
+        result = _scrub_candidate_name(text, "Jean Dupont")
+        assert "Jean" not in result
+        assert "Dupont" not in result
+
+    def test_short_words_not_scrubbed_individually(self):
+        # Full name "Ali Ben" is scrubbed as a unit (specific enough)
+        # But individual short parts should NOT be scrubbed when appearing alone
+        text = "Ali est un developpeur senior. Ben travaille aussi."
+        result = _scrub_candidate_name(text, "Ali Ben")
+        # "Ali" (3 chars) and "Ben" (3 chars) individually should NOT be scrubbed
+        assert "Ali" in result
+        assert "Ben" in result
+
+    def test_full_name_with_short_parts_still_scrubbed(self):
+        text = "Ali Ben est un developpeur senior."
+        result = _scrub_candidate_name(text, "Ali Ben")
+        # Full name as a unit IS scrubbed
+        assert "Ali Ben" not in result
+
+    def test_french_titles_scrubbed(self):
+        text = "M. Dupont a rejoint l'equipe. Mme Martin est arrivee."
+        result = _scrub_candidate_name(text, "Jean Dupont")
+        assert "M. Dupont" not in result
+        assert "Mme Martin" in result  # different name, not scrubbed
+
+    def test_case_insensitive(self):
+        text = "JEAN dupont est ingenieur."
+        result = _scrub_candidate_name(text, "Jean Dupont")
+        assert "JEAN" not in result
+        assert "dupont" not in result
+
+    def test_multiple_occurrences(self):
+        text = "Dupont a commence chez X. Plus tard, Dupont a dirige le projet."
+        result = _scrub_candidate_name(text, "Jean Dupont")
+        assert "Dupont" not in result
+
+    def test_empty_name(self):
+        text = "Some text here."
+        result = _scrub_candidate_name(text, "")
+        assert result == text
+
+    def test_preserves_common_words(self):
+        text = "le developpeur a fait un bon travail"
+        result = _scrub_candidate_name(text, "Jean Dupont")
+        assert result == text
+
+
 class TestScrubNames:
     def test_replaces_company_names(self):
         text = "J'ai travaille chez TechCorp pendant 3 ans"
@@ -97,6 +154,14 @@ class TestScrubNames:
         result = _scrub_names(text, {}, school_map)
         assert "Polytechnique" not in result
         assert "Ecole X" in result
+
+    def test_scrubs_candidate_name_when_provided(self):
+        text = "Jean Dupont a travaille chez TechCorp."
+        company_map = {"TechCorp": "Entreprise A"}
+        result = _scrub_names(text, company_map, {}, candidate_name="Jean Dupont")
+        assert "Jean Dupont" not in result
+        assert "TechCorp" not in result
+        assert "Entreprise A" in result
 
 
 class TestAnonymizeCandidateData:
@@ -183,3 +248,89 @@ class TestAnonymizeCandidateData:
             assert "TechCorp" not in result["summary"]
             assert "Polytechnique" not in result["summary"]
             assert "jean.dupont@email.com" not in result["summary"]
+
+    def test_candidate_name_removed_from_summary(self):
+        cv_data = {
+            **SAMPLE_CV_DATA,
+            "summary": "Jean Dupont is an engineer with 10 years experience at TechCorp.",
+        }
+        result = anonymize_candidate_data(CANDIDATE_ID, cv_data)
+        assert "Jean Dupont" not in result["summary"]
+        assert "Jean" not in result["summary"]
+        assert "Dupont" not in result["summary"]
+        assert "engineer" in result["summary"]
+
+    def test_candidate_name_removed_from_responsibilities(self):
+        cv_data = {
+            **SAMPLE_CV_DATA,
+            "experiences": [
+                {
+                    "title": "Lead Dev",
+                    "company": "TechCorp",
+                    "duration": "3 ans",
+                    "responsibilities": [
+                        "Jean Dupont a dirige l'equipe backend",
+                        "Dupont a mis en place les pipelines CI/CD",
+                    ],
+                    "key_achievements": ["Jean a livre le projet en avance"],
+                }
+            ],
+        }
+        result = anonymize_candidate_data(CANDIDATE_ID, cv_data)
+        exp = result["experiences"][0]
+        for resp in exp["responsibilities"]:
+            assert "Dupont" not in resp
+        # "Jean" is 4 chars, should be scrubbed
+        for resp in exp["responsibilities"]:
+            assert "Jean" not in resp
+        for ach in exp["key_achievements"]:
+            assert "Jean" not in ach
+
+    def test_candidate_name_removed_from_description(self):
+        cv_data = {
+            **SAMPLE_CV_DATA,
+            "experiences": [
+                {
+                    "title": "Lead Dev",
+                    "company": "TechCorp",
+                    "duration": "3 ans",
+                    "description": "Jean Dupont a developpe des APIs REST chez TechCorp.",
+                    "responsibilities": [],
+                    "key_achievements": [],
+                }
+            ],
+        }
+        result = anonymize_candidate_data(CANDIDATE_ID, cv_data)
+        exp = result["experiences"][0]
+        assert "Jean Dupont" not in exp["description"]
+        assert "Jean" not in exp["description"]
+        assert "Dupont" not in exp["description"]
+        assert "TechCorp" not in exp["description"]
+        assert "Entreprise A" in exp["description"]
+
+    def test_false_positives_short_words_not_scrubbed(self):
+        """Verify that common short words (le, de, et) are NOT scrubbed."""
+        cv_data = {
+            "name": "Ali De Le",
+            "skills": ["Python"],
+            "experiences": [
+                {
+                    "title": "Dev",
+                    "company": "Acme",
+                    "duration": "1 an",
+                    "description": "le developpeur de talent et de rigueur",
+                    "responsibilities": ["le lead de l'equipe et la gestion"],
+                    "key_achievements": [],
+                }
+            ],
+            "education": [],
+            "languages": [],
+        }
+        result = anonymize_candidate_data(CANDIDATE_ID, cv_data)
+        exp = result["experiences"][0]
+        # "le", "De", "et" are <= 3 chars, should NOT be individually scrubbed
+        assert "le" in exp["description"].lower()
+        assert "de" in exp["description"].lower()
+        assert "et" in exp["description"].lower()
+        assert "le" in exp["responsibilities"][0].lower()
+        assert "de" in exp["responsibilities"][0].lower()

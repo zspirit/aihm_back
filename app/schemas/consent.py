@@ -7,6 +7,10 @@ class ConsentGrantRequest(BaseModel):
     granted: bool
 
 
+class GranularConsentRequest(BaseModel):
+    consents: dict[str, bool]
+
+
 class ConsentResponse(BaseModel):
     id: str
     candidate_id: str

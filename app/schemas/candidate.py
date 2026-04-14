@@ -157,6 +157,9 @@ class CandidateSummaryResponse(BaseModel):
     pitch: str
     strengths: list[str] = Field(default_factory=list, max_length=3)
     concerns: list[str] = Field(default_factory=list, max_length=2)
+    areas_to_dig: list[str] | None = None
+    red_flags: list[str] | None = None
+    key_questions: list[str] | None = None
     overall_score: float
     recommendation: str = Field(description="go | no_go | to_deepen")
     generated_at: str

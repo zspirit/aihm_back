@@ -28,6 +28,7 @@ def _tenant_to_response(tenant: Tenant) -> TenantSettings:
         scoring_education_weight=tenant.scoring_education_weight,
         compliance_framework=tenant.compliance_framework,
         compliance_config=tenant.compliance_config,
+        modules_config=tenant.modules_config,
     )
 
 

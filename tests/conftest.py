@@ -110,6 +110,8 @@ def _mock_celery_tasks():
         "app.workers.report_generation.generate_report.delay",
         "app.workers.transcription.transcribe.delay",
         "app.workers.analysis.analyze.delay",
+        "app.workers.purge.purge_expired_data.delay",
+        "app.workers.feedback.generate_and_send_feedback.delay",
     ]
     patches = []
     for t in tasks:

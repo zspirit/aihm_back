@@ -421,8 +421,7 @@ def test_vivier_full_pipeline():
     sess.query.return_value.filter.return_value.all.return_value = []
 
     with patch("app.workers.cv_processing.get_sync_session", return_value=sess), \
-         patch("app.workers.cv_processing.parse_cv_file", return_value=MOCK_CV_PARSED), \
-         patch("app.workers.cv_processing.score_cv_quality", return_value=MOCK_CV_QUALITY):
+         patch("app.workers.cv_processing.parse_cv_file", return_value=MOCK_CV_PARSED):
         from app.workers.cv_processing import process_cv
         process_cv(str(cand.id))
     assert cand.pipeline_status == "cv_analyzed"

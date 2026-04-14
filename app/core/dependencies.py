@@ -84,3 +84,33 @@ async def check_free_tier_limit(db: AsyncSession, tenant_id: UUID) -> None:
             status_code=402,
             detail="Limite du plan gratuit atteinte (3 entretiens/mois). Passez au plan Pro.",
         )
+
+
+def require_module(module_key: str):
+    """
+    Dependency: vérifie que le module est activé pour ce tenant.
+    Lève HTTP 403 si le module est désactivé.
+
+    Défaut: tous les modules sont activés par défaut (opt-out model).
+    """
+    async def _check(
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_user),
+    ) -> None:
+        from app.models.tenant import Tenant
+
+        tenant = await db.get(Tenant, current_user.tenant_id)
+        if not tenant:
+            raise HTTPException(status_code=404, detail="Tenant not found")
+
+        modules = tenant.modules_config or {}
+        # Default True: if module_key not in dict, it's enabled
+        is_enabled = modules.get(module_key, True)
+
+        if not is_enabled:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Le module '{module_key}' est désactivé pour votre compte. Contactez votre administrateur.",
+            )
+
+    return Depends(_check)

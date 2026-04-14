@@ -608,7 +608,7 @@ async def update_candidate_summary(
         raise HTTPException(status_code=404, detail="Candidat introuvable")
 
     current = candidate.summary_json or {}
-    allowed_fields = {"pitch", "strengths", "concerns", "overall_score", "recommendation"}
+    allowed_fields = {"pitch", "strengths", "concerns", "areas_to_dig", "red_flags", "key_questions", "overall_score", "recommendation"}
     for key, value in payload.items():
         if key in allowed_fields:
             current[key] = value

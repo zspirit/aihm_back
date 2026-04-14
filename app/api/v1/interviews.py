@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import check_free_tier_limit, get_current_user, get_tenant_id
+from app.core.dependencies import check_free_tier_limit, get_current_user, get_tenant_id, require_module, require_role
 from app.models.analysis import Analysis
 from app.models.candidate import Candidate
 from app.models.user import User
@@ -15,6 +15,7 @@ from app.models.consent import Consent
 from app.models.interview import Interview
 from app.models.position import Position
 from app.models.report import Report
+from app.models.scorecard import Scorecard
 from app.models.transcription import Transcription
 from app.schemas.interview import (
     AnalysisResponse,
@@ -25,6 +26,12 @@ from app.schemas.interview import (
     PaginatedInterviews,
     ReportResponse,
     TranscriptionResponse,
+)
+from app.schemas.scorecard import (
+    ScorecardCreate,
+    ScorecardListResponse,
+    ScorecardResponse,
+    ScorecardAggregated,
 )
 import structlog
 
@@ -42,6 +49,7 @@ ALLOWED_SORT_FIELDS = {"created_at", "started_at", "ended_at", "duration_seconds
     "/candidates/{candidate_id}/interviews",
     response_model=InterviewResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[require_module("ai_phone_interview")],
 )
 async def schedule_interview(
     candidate_id: UUID,
@@ -493,3 +501,125 @@ async def download_report_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="rapport_{interview_id}.pdf"'},
     )
+
+
+@router.post(
+    "/interviews/{interview_id}/scorecard",
+    response_model=ScorecardResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upsert_scorecard(
+    interview_id: UUID,
+    data: ScorecardCreate,
+    current_user: User = Depends(require_role("admin", "recruiter")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cree ou met a jour la scorecard de l'evaluateur pour cet entretien."""
+    result = await db.execute(
+        select(Interview).where(
+            Interview.id == interview_id,
+            Interview.tenant_id == current_user.tenant_id,
+        )
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Interview introuvable")
+
+    result = await db.execute(
+        select(Scorecard).where(
+            Scorecard.interview_id == interview_id,
+            Scorecard.evaluator_id == current_user.id,
+        )
+    )
+    scorecard = result.scalar_one_or_none()
+
+    if scorecard:
+        scorecard.technical = data.technical
+        scorecard.problem_solving = data.problem_solving
+        scorecard.communication = data.communication
+        scorecard.behavioral = data.behavioral
+        scorecard.notes = data.notes
+    else:
+        scorecard = Scorecard(
+            interview_id=interview_id,
+            tenant_id=current_user.tenant_id,
+            evaluator_id=current_user.id,
+            technical=data.technical,
+            problem_solving=data.problem_solving,
+            communication=data.communication,
+            behavioral=data.behavioral,
+            notes=data.notes,
+        )
+        db.add(scorecard)
+
+    await db.flush()
+    await db.refresh(scorecard)
+
+    return ScorecardResponse(
+        id=str(scorecard.id),
+        evaluator_id=str(scorecard.evaluator_id),
+        technical=scorecard.technical,
+        problem_solving=scorecard.problem_solving,
+        communication=scorecard.communication,
+        behavioral=scorecard.behavioral,
+        notes=scorecard.notes,
+        created_at=scorecard.created_at,
+    )
+
+
+@router.get(
+    "/interviews/{interview_id}/scorecard",
+    response_model=ScorecardListResponse,
+)
+async def get_scorecards(
+    interview_id: UUID,
+    current_user: User = Depends(require_role("admin", "recruiter")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retourne toutes les scorecards d'un entretien avec les moyennes agregees."""
+    result = await db.execute(
+        select(Interview).where(
+            Interview.id == interview_id,
+            Interview.tenant_id == current_user.tenant_id,
+        )
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Interview introuvable")
+
+    result = await db.execute(
+        select(Scorecard).where(Scorecard.interview_id == interview_id)
+    )
+    scorecards = result.scalars().all()
+
+    items = [
+        ScorecardResponse(
+            id=str(sc.id),
+            evaluator_id=str(sc.evaluator_id),
+            technical=sc.technical,
+            problem_solving=sc.problem_solving,
+            communication=sc.communication,
+            behavioral=sc.behavioral,
+            notes=sc.notes,
+            created_at=sc.created_at,
+        )
+        for sc in scorecards
+    ]
+
+    if scorecards:
+        n = len(scorecards)
+        aggregated = ScorecardAggregated(
+            technical_avg=round(sum(sc.technical for sc in scorecards) / n, 2),
+            problem_solving_avg=round(sum(sc.problem_solving for sc in scorecards) / n, 2),
+            communication_avg=round(sum(sc.communication for sc in scorecards) / n, 2),
+            behavioral_avg=round(sum(sc.behavioral for sc in scorecards) / n, 2),
+            total_evaluators=n,
+        )
+    else:
+        aggregated = ScorecardAggregated(
+            technical_avg=0.0,
+            problem_solving_avg=0.0,
+            communication_avg=0.0,
+            behavioral_avg=0.0,
+            total_evaluators=0,
+        )
+
+    return ScorecardListResponse(scorecards=items, aggregated=aggregated)

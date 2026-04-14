@@ -71,6 +71,27 @@ def generate_report(self, interview_id: str):
         except Exception as e:
             logger.warning("report_ready_email_trigger_failed", interview_id=interview_id, error=str(e))
 
+        # Trigger candidate feedback if consent granted
+        try:
+            from app.models.consent import Consent
+
+            consent_result = session.execute(
+                select(Consent).where(
+                    Consent.candidate_id == candidate.id,
+                    Consent.type == "data_processing",
+                    Consent.granted.is_(True),
+                )
+            )
+            has_consent = consent_result.scalar_one_or_none() is not None
+
+            if has_consent:
+                from app.workers.feedback import generate_and_send_feedback
+
+                generate_and_send_feedback.delay(str(candidate.id), str(interview.id))
+                logger.info("feedback_triggered", interview_id=interview_id, candidate_id=str(candidate.id))
+        except Exception as e:
+            logger.warning("feedback_trigger_failed", interview_id=interview_id, error=str(e))
+
         # Cleanup audio file from MinIO (no longer needed after report is generated)
         _cleanup_audio(interview)
 

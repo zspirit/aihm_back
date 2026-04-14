@@ -113,14 +113,18 @@ async def login(request: Request, data: LoginRequest, db: AsyncSession = Depends
     if not user or not verify_password(password, user.password_hash):
         raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect")
 
-    await log_action(
-        db,
-        tenant_id=user.tenant_id,
-        user_id=user.id,
-        action="login",
-        entity_type="user",
-        entity_id=str(user.id),
-    )
+    # Wrapped in try-except to not break login on audit errors
+    try:
+        await log_action(
+            db,
+            tenant_id=user.tenant_id,
+            user_id=user.id,
+            action="login",
+            entity_type="user",
+            entity_id=str(user.id),
+        )
+    except Exception:
+        pass
 
     token_data = {"sub": str(user.id), "tenant_id": str(user.tenant_id), "role": user.role}
     return TokenResponse(

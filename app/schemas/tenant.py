@@ -2,6 +2,13 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+MODULE_KEYS = [
+    "cv_scoring", "ai_phone_interview", "report_generation",
+    "candidate_feedback", "matching_nm", "collaborative_scorecard",
+    "bulk_import", "analytics", "copilot", "webhooks",
+    "consent_gdpr", "anonymizer",
+]
+
 
 class TenantSettings(BaseModel):
     id: str
@@ -20,6 +27,7 @@ class TenantSettings(BaseModel):
     # Compliance
     compliance_framework: str = "CNDP"
     compliance_config: dict | None = None
+    modules_config: dict[str, bool] | None = None
 
 
 class TenantSettingsUpdate(BaseModel):
@@ -37,6 +45,7 @@ class TenantSettingsUpdate(BaseModel):
     # Compliance
     compliance_framework: str | None = None
     compliance_config: dict | None = None
+    modules_config: dict[str, bool] | None = None
 
 
 # Compliance frameworks registry

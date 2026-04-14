@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import require_role
+from app.core.dependencies import require_module, require_role
 from app.models.candidate import Candidate
 from app.models.position import Position
 from app.models.user import User
@@ -18,7 +18,7 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/positions", tags=["Matching"])
 
 
-@router.post("/{position_id}/match", response_model=MatchResponse)
+@router.post("/{position_id}/match", response_model=MatchResponse, dependencies=[require_module("matching_nm")])
 async def match_candidates_for_position(
     position_id: UUID,
     current_user: User = Depends(require_role("admin", "recruiter")),
@@ -68,7 +68,7 @@ async def match_candidates_for_position(
         raise HTTPException(status_code=502, detail=f"Erreur lors du matching: {str(e)}")
 
 
-@router.post("/match", response_model=MatchResponse)
+@router.post("/match", response_model=MatchResponse, dependencies=[require_module("matching_nm")])
 async def match_candidates_with_criteria(
     request: MatchRequest,
     current_user: User = Depends(require_role("admin", "recruiter")),

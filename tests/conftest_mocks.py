@@ -32,6 +32,15 @@ MOCK_CV_PARSED = {
     ],
     "languages": ["Francais", "Anglais"],
     "summary": "Developpeur backend 5 ans, specialise Python et APIs.",
+    "quality_score": {
+        "score": 68,
+        "explanation": {
+            "technical_depth": {"score": 72, "justification": "Competences demontrees en projet"},
+            "experience_quality": {"score": 65, "justification": "Parcours coherent"},
+            "education_relevance": {"score": 70, "justification": "Formation adaptee"},
+            "cv_completeness": {"score": 65, "justification": "CV bien structure"},
+        },
+    },
 }
 
 MOCK_CV_SCORE = {

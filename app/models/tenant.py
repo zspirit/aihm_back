@@ -30,6 +30,9 @@ class Tenant(Base):
     compliance_framework: Mapped[str] = mapped_column(String(50), default="CNDP")
     compliance_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
+    # Feature flags per module, e.g. {"ai_phone_interview": false}
+    modules_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True, default={})
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

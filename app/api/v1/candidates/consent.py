@@ -88,23 +88,35 @@ async def invite_candidate(
     if not candidate.email:
         raise HTTPException(status_code=400, detail="Le candidat n'a pas d'adresse email")
 
-    consent_result = await db.execute(
-        select(Consent).where(
-            Consent.candidate_id == candidate_id,
-            Consent.type == "data_processing",
-        )
+    # Create granular consent records (4 types) + legacy data_processing for backward compat
+    import uuid as _uuid
+    CONSENT_TYPES = ["data_processing", "scoring", "call_recording", "data_transfer_us"]
+
+    # Check if consents already exist for this candidate
+    existing_result = await db.execute(
+        select(Consent).where(Consent.candidate_id == candidate_id)
     )
-    consent = consent_result.scalar_one_or_none()
-    if not consent:
-        import uuid as _uuid
-        consent = Consent(
-            candidate_id=candidate_id,
-            token=str(_uuid.uuid4()),
-            type="data_processing",
-            granted=False,
-        )
-        db.add(consent)
-        await db.flush()
+    existing_consents = {c.type: c for c in existing_result.scalars().all()}
+
+    consent = None
+    for consent_type in CONSENT_TYPES:
+        if consent_type not in existing_consents:
+            new_consent = Consent(
+                candidate_id=candidate_id,
+                token=str(_uuid.uuid4()),
+                type=consent_type,
+                granted=False,
+            )
+            db.add(new_consent)
+            if consent_type == "data_processing":
+                consent = new_consent
+        else:
+            if consent_type == "data_processing":
+                consent = existing_consents[consent_type]
+    await db.flush()
+
+    if consent is None:
+        consent = existing_consents.get("data_processing")
 
     custom_subject = body.get("subject") if body else None
     custom_html = body.get("html") if body else None
@@ -167,10 +179,11 @@ async def grant_consent_admin(
         raise HTTPException(status_code=404, detail="Candidat introuvable")
 
     from datetime import datetime, timezone
-
-    # Ensure both required consent types exist and are granted
     import uuid as _uuid
-    for consent_type in ["data_processing", "call_recording"]:
+
+    # Ensure all 4 consent types exist and are granted
+    ALL_CONSENT_TYPES = ["data_processing", "scoring", "call_recording", "data_transfer_us"]
+    for consent_type in ALL_CONSENT_TYPES:
         consent_result = await db.execute(
             select(Consent).where(
                 Consent.candidate_id == candidate_id,
@@ -179,7 +192,6 @@ async def grant_consent_admin(
         )
         consent = consent_result.scalar_one_or_none()
         if not consent:
-            # Create if doesn't exist
             consent = Consent(
                 candidate_id=candidate_id,
                 type=consent_type,
@@ -190,7 +202,6 @@ async def grant_consent_admin(
             )
             db.add(consent)
         else:
-            # Update existing
             consent.granted = True
             consent.granted_at = datetime.now(timezone.utc)
             consent.channel = "admin"
@@ -198,19 +209,4 @@ async def grant_consent_admin(
     candidate.pipeline_status = "consent_given"
     await db.commit()
 
-    # Verify both consents were created/updated
-    verify_result = await db.execute(
-        select(Consent).where(
-            Consent.candidate_id == candidate_id,
-            Consent.granted.is_(True),
-        )
-    )
-    granted_consents = [c.type for c in verify_result.scalars().all()]
-    if "data_processing" not in granted_consents or "call_recording" not in granted_consents:
-        logger.error(
-            "consent_incomplete_after_grant",
-            candidate_id=str(candidate_id),
-            granted_types=granted_consents,
-        )
-
-    return {"status": "ok", "message": "Consentements accordés (data_processing + call_recording)"}
+    return {"status": "ok", "message": "Consentements accordés (data_processing + scoring + call_recording + data_transfer_us)"}

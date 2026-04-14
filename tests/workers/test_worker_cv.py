@@ -11,7 +11,10 @@ def _claude_resp(content):
 
 PARSED = {"name": "Alice", "email": "a@t.com", "skills": ["Python", "FastAPI"], "experience_years": 4,
           "experiences": [{"title": "Dev", "company": "Acme", "duration": "4a", "description": "APIs"}],
-          "education": [{"degree": "Master", "school": "UP", "year": "2019"}], "languages": ["FR"], "summary": "Dev backend."}
+          "education": [{"degree": "Master", "school": "UP", "year": "2019"}], "languages": ["FR"], "summary": "Dev backend.",
+          "quality_score": {"score": 68, "explanation": {"technical_depth": {"score": 70, "justification": "OK"},
+                           "experience_quality": {"score": 65, "justification": "OK"}, "education_relevance": {"score": 70, "justification": "OK"},
+                           "cv_completeness": {"score": 65, "justification": "OK"}}}}
 SCORE = {"score": 80, "explanation": {"skills_match": {"score": 85, "matched": ["Python"], "missing": [], "justification": "OK"},
          "experience_match": {"score": 75, "justification": "4a"}, "education_match": {"score": 80, "justification": "M"}}}
 QUALITY = {"score": 68, "explanation": {"technical_depth": {"score": 70, "justification": "OK"},
@@ -96,6 +99,12 @@ def _mock_session(candidate, position=None, tenant=None):
         if name == "Tenant": return tenant
         return None
     sess.get.side_effect = _get
+
+    # Mock session.query().filter().all() to return empty list (no applications)
+    mock_query = MagicMock()
+    mock_query.filter.return_value.all.return_value = []
+    sess.query.return_value = mock_query
+
     return sess
 
 def _make_cand(cv_path="cvs/f.pdf", pos_id=None, tid=None):
@@ -115,8 +124,10 @@ def _make_tenant(s=50, e=30, ed=20):
     t = MagicMock(); t.scoring_skills_weight = s; t.scoring_experience_weight = e; t.scoring_education_weight = ed
     return t
 
-def _run_process_cv(candidate_id, sess, score_result=SCORE, parsed=PARSED, **kwargs):
+def _run_process_cv(candidate_id, sess, score_result=SCORE, parsed=None, **kwargs):
     """Run process_cv with all external deps mocked."""
+    import copy
+    parsed = copy.deepcopy(parsed if parsed is not None else PARSED)
     with patch("app.workers.cv_processing.get_sync_session", return_value=sess), \
          patch("app.workers.cv_processing.parse_cv_file", return_value=parsed), \
          patch("app.workers.cv_processing.score_cv", return_value=score_result) as ms, \
@@ -147,9 +158,10 @@ def test_process_cv_no_file():
 def test_process_cv_vivier():
     c = _make_cand(pos_id=None); t = _make_tenant(); sess = _mock_session(c, None, t)
     ms, mq, me, mg, mu = _run_process_cv(str(c.id), sess)
-    ms.assert_not_called()
-    mq.assert_called_once()
-    assert c.cv_score == 68
+    ms.assert_not_called()  # score_cv not called (no position)
+    # mq (score_cv_quality) no longer exists as separate call; quality comes from parsed_data
+    assert c.cv_score == 68  # Quality score from PARSED
+    assert c.profile_score == 68  # Also set from quality
     assert c.pipeline_status == "cv_analyzed"
 
 def test_process_cv_bulk_import():
@@ -158,11 +170,17 @@ def test_process_cv_bulk_import():
     ms, mq, me, mg, mu = _run_process_cv(str(c.id), sess, bulk_import_id=bid)
     mu.assert_called_once_with(sess, bid, True)
 
-def test_auto_reject():
+def test_auto_reject_flags_for_review():
     pid = str(uuid.uuid4()); c = _make_cand(pos_id=pid); p = _make_pos(pid=uuid.UUID(pid), reject=50); t = _make_tenant()
     sess = _mock_session(c, p, t)
-    _run_process_cv(str(c.id), sess, score_result={"score": 20, "explanation": {}}, position_id=pid)
-    assert c.pipeline_status == "rejected"
+    with patch("app.services.notification_service.create_notification") as mock_notif:
+        _run_process_cv(str(c.id), sess, score_result={"score": 20, "explanation": {}}, position_id=pid)
+    assert c.pipeline_status == "flagged_for_review"
+    mock_notif.assert_called_once()
+    call_kwargs = mock_notif.call_args.kwargs
+    assert call_kwargs["type"] == "auto_flagged_for_review"
+    assert "20" in call_kwargs["message"]
+    assert "50" in call_kwargs["message"]
 
 def test_auto_advance():
     pid = str(uuid.uuid4()); c = _make_cand(pos_id=pid); p = _make_pos(pid=uuid.UUID(pid), advance=75); t = _make_tenant()

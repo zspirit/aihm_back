@@ -15,6 +15,7 @@ from app.models.email_verification_token import EmailVerificationToken
 from app.models.bulk_import import BulkImport
 from app.models.notification import Notification
 from app.models.match_score import MatchScore, MatchSession
+from app.models.scorecard import Scorecard
 
 __all__ = [
     "Tenant",
@@ -35,4 +36,5 @@ __all__ = [
     "Notification",
     "MatchScore",
     "MatchSession",
+    "Scorecard",
 ]

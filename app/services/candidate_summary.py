@@ -38,6 +38,9 @@ Produis un resume au format JSON strict (sans markdown, juste le JSON brut) :
   "pitch": "Resume du profil en 1-2 phrases percutantes (qui est ce candidat, son experience cle, sa valeur ajoutee)",
   "strengths": ["Point fort 1 (factuel et concret)", "Point fort 2", "Point fort 3 max"],
   "concerns": ["Point d'attention 1 (factuel)", "Point d'attention 2 max"],
+  "areas_to_dig": ["Question ciblee 1 pour approfondir une zone d'ombre", "Question ciblee 2", "Question ciblee 3 max"],
+  "red_flags": ["Signal d'alerte factuel 1 (ex: changements frequents de poste, trou inexplique)", "Signal 2 max"],
+  "key_questions": ["Question de screening rapide 1 (evaluable en 10 min)", "Question 2", "Question 3 max"],
   "overall_score": 0,
   "recommendation": "go | no_go | to_deepen"
 }}
@@ -46,6 +49,9 @@ Regles pour chaque champ :
 - pitch : 1-2 phrases max, percutantes, factuelles. Mentionne le niveau d'experience et le domaine.
 - strengths : 3 points forts max, chacun en 1 phrase courte. Bases sur des faits (competences demontrees, annees d'experience, realisations).
 - concerns : 2 points d'attention max. Bases sur des lacunes factuelles (pas de speculation). Si aucun, tableau vide.
+- areas_to_dig : 2-3 questions ciblees que le hiring manager devrait poser pour approfondir les zones d'ombre ou lacunes detectees. Focus sur les gaps dans le parcours.
+- red_flags : signaux d'alerte factuels uniquement (ex: "changements de poste tous les 6 mois sur 2021-2023", "trou de 18 mois entre 2020 et 2021"). Pas de speculation. Si aucun, tableau vide.
+- key_questions : 2-3 questions de screening rapide pour evaluer le candidat en 10 minutes (questions concretes, testables).
 - overall_score : score de 0 a 100 base sur l'ensemble des donnees disponibles. Si seul le CV est disponible, se baser sur le score CV/profil. Si un entretien a ete realise, ponderer fortement le resultat d'entretien.
 - recommendation :
   - "go" : candidat solide, profil coherent, pas de signal d'alerte majeur
@@ -182,6 +188,9 @@ def generate_candidate_summary(
     result["pitch"] = result.get("pitch", "Resume non disponible")
     result["strengths"] = result.get("strengths", [])[:3]
     result["concerns"] = result.get("concerns", [])[:2]
+    result["areas_to_dig"] = result.get("areas_to_dig", [])[:3]
+    result["red_flags"] = result.get("red_flags", [])[:3]
+    result["key_questions"] = result.get("key_questions", [])[:3]
 
     if "overall_score" in result:
         result["overall_score"] = float(result["overall_score"])

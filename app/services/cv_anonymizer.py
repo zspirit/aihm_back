@@ -35,6 +35,9 @@ def anonymize_candidate_data(candidate_id: str, cv_parsed_data: dict) -> dict:
             "summary": None,
         }
 
+    # Extract candidate name for scrubbing
+    candidate_name = cv_parsed_data.get("name") or None
+
     # Build company mapping
     companies = _extract_unique_values(cv_parsed_data, "experiences", "company")
     company_map = {name: f"Entreprise {chr(65 + i)}" for i, name in enumerate(companies)}
@@ -53,12 +56,19 @@ def anonymize_candidate_data(candidate_id: str, cv_parsed_data: dict) -> dict:
             "duration_months": exp.get("duration_months"),
             "responsibilities": exp.get("responsibilities", []),
             "key_achievements": exp.get("key_achievements", []),
+            "description": exp.get("description", ""),
         }
-        # Scrub company names from responsibility/achievement text
+        # Scrub company/school/candidate names from free-text fields
         for field in ("responsibilities", "key_achievements"):
             anon_exp[field] = [
-                _scrub_names(text, company_map, school_map) for text in (anon_exp.get(field) or [])
+                _scrub_names(text, company_map, school_map, candidate_name)
+                for text in (anon_exp.get(field) or [])
             ]
+        # Scrub description field (job description text)
+        if anon_exp.get("description"):
+            anon_exp["description"] = _scrub_names(
+                anon_exp["description"], company_map, school_map, candidate_name
+            )
         experiences.append(anon_exp)
 
     # Anonymize education
@@ -75,7 +85,7 @@ def anonymize_candidate_data(candidate_id: str, cv_parsed_data: dict) -> dict:
     # Anonymize summary — remove personal references
     summary = cv_parsed_data.get("summary", "")
     if summary:
-        summary = _scrub_names(summary, company_map, school_map)
+        summary = _scrub_names(summary, company_map, school_map, candidate_name)
         summary = _remove_personal_info_from_text(summary)
 
     return {
@@ -107,14 +117,49 @@ def _extract_unique_values(data: dict, list_key: str, field_key: str) -> list[st
     return result
 
 
-def _scrub_names(text: str, company_map: dict, school_map: dict) -> str:
-    """Remplace les noms d'entreprises et d'ecoles dans un texte."""
+def _scrub_names(
+    text: str, company_map: dict, school_map: dict, candidate_name: str | None = None
+) -> str:
+    """Remplace les noms d'entreprises, d'ecoles et du candidat dans un texte."""
     for original, replacement in company_map.items():
         if original:
             text = text.replace(original, replacement)
     for original, replacement in school_map.items():
         if original:
             text = text.replace(original, replacement)
+    if candidate_name:
+        text = _scrub_candidate_name(text, candidate_name)
+    return text
+
+
+def _scrub_candidate_name(text: str, full_name: str) -> str:
+    """Supprime le nom du candidat et ses variantes du texte.
+
+    Gere le nom complet, prenom, nom de famille, et les titres francais (M., Mme, etc.).
+    Ne scrub pas les mots de 3 caracteres ou moins pour eviter les faux positifs.
+    """
+    parts = full_name.strip().split()
+    if not parts:
+        return text
+
+    # Full name first (most specific)
+    text = re.sub(r'\b' + re.escape(full_name.strip()) + r'\b', '[candidat]', text, flags=re.IGNORECASE)
+
+    # French title variations with name parts
+    title_prefixes = ["M.", "Mr.", "Mme", "Mlle", "Dr.", "Pr."]
+    for part in parts:
+        if len(part) <= 3:
+            continue
+        for title in title_prefixes:
+            pattern = re.escape(title) + r'\s+' + re.escape(part)
+            text = re.sub(pattern, '[candidat]', text, flags=re.IGNORECASE)
+
+    # Individual name parts (only if > 3 chars)
+    for part in parts:
+        if len(part) <= 3:
+            continue
+        text = re.sub(r'\b' + re.escape(part) + r'\b', '[candidat]', text, flags=re.IGNORECASE)
+
     return text
 
 

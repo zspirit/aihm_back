@@ -30,6 +30,18 @@ def process_cv(self, candidate_id: str, position_id: str | None = None, bulk_imp
         candidate.pipeline_status = "cv_processing"
         session.commit()
 
+        # Check cv_scoring module is enabled for this tenant before any external call
+        from app.models.tenant import Tenant
+        tenant = session.get(Tenant, candidate.tenant_id)
+        modules = (tenant.modules_config or {}) if tenant else {}
+        if not modules.get("cv_scoring", True):
+            logger.info(
+                "cv_scoring module disabled for tenant",
+                tenant_id=str(candidate.tenant_id),
+                candidate_id=candidate_id,
+            )
+            return  # Exit silently, task completes without processing
+
         # Use explicit position_id if provided, else fall back to candidate.position_id
         effective_position_id = UUID(position_id) if position_id else candidate.position_id
         position = session.get(Position, effective_position_id) if effective_position_id else None
@@ -46,9 +58,7 @@ def process_cv(self, candidate_id: str, position_id: str | None = None, bulk_imp
         candidate.profile_score_explanation = quality_data.get("explanation")
         logger.info("profile_score_computed", candidate_id=candidate_id, score=candidate.profile_score)
 
-        # Load tenant scoring weights
-        from app.models.tenant import Tenant
-        tenant = session.get(Tenant, candidate.tenant_id)
+        # Load tenant scoring weights (tenant already fetched above)
         scoring_weights = {
             "skills": tenant.scoring_skills_weight if tenant else 50,
             "experience": tenant.scoring_experience_weight if tenant else 30,
@@ -110,8 +120,18 @@ def process_cv(self, candidate_id: str, position_id: str | None = None, bulk_imp
         cv_score = candidate.cv_score
         if position:
             if position.auto_reject_threshold is not None and cv_score is not None and cv_score < position.auto_reject_threshold:
-                candidate.pipeline_status = "rejected"
-                logger.info("auto_rejected", candidate_id=candidate_id, score=cv_score, threshold=position.auto_reject_threshold)
+                candidate.pipeline_status = "flagged_for_review"
+                logger.info("auto_flagged_for_review", candidate_id=candidate_id, score=cv_score, threshold=position.auto_reject_threshold)
+                from app.services.notification_service import create_notification
+                create_notification(
+                    session=session,
+                    tenant_id=candidate.tenant_id,
+                    user_id=None,
+                    type="auto_flagged_for_review",
+                    title="Candidat signale pour revue",
+                    message=f"Le candidat {candidate.name} a obtenu un score de {cv_score}/100 (seuil de rejet: {position.auto_reject_threshold}). Revue manuelle requise.",
+                    data={"candidate_id": str(candidate.id), "score": cv_score, "threshold": position.auto_reject_threshold},
+                )
             elif position.auto_advance_threshold is not None and cv_score is not None and cv_score >= position.auto_advance_threshold:
                 candidate.pipeline_status = "invited"
                 auto_advanced = True
