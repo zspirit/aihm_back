@@ -40,3 +40,4 @@ class Tenant(Base):
     users = relationship("User", back_populates="tenant")
     positions = relationship("Position", back_populates="tenant")
     enterprises = relationship("Enterprise", back_populates="tenant")
+    skills = relationship("Skill", back_populates="tenant")

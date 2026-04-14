@@ -105,6 +105,8 @@ from app.api.v1.batch_matching import router as batch_matching_router
 from app.api.v1.reports import router as reports_router
 from app.api.v1.pipeline import router as pipeline_router
 from app.api.v1.settings import router as settings_router
+from app.api.v1.skills import router as skills_router
+from app.api.v1.metrics import router as metrics_router
 
 app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
 app.include_router(applications_router, prefix=settings.API_V1_PREFIX)
@@ -128,6 +130,8 @@ app.include_router(batch_matching_router, prefix=settings.API_V1_PREFIX)
 app.include_router(reports_router, prefix=settings.API_V1_PREFIX)
 app.include_router(pipeline_router, prefix=settings.API_V1_PREFIX)
 app.include_router(settings_router, prefix=settings.API_V1_PREFIX)
+app.include_router(skills_router, prefix=settings.API_V1_PREFIX)
+app.include_router(metrics_router, prefix=settings.API_V1_PREFIX)
 
 
 # --- Health Check enrichi ---
