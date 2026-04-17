@@ -1,7 +1,7 @@
 from typing import Optional
 from datetime import datetime
 from uuid import UUID
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class EnterpriseCreate(BaseModel):
@@ -9,9 +9,20 @@ class EnterpriseCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255, description="Enterprise name")
     industry: Optional[str] = Field(None, max_length=100, description="Industry type")
     domain: Optional[str] = Field(None, max_length=255, description="Domain (e.g., example.com)")
-    contact_email: Optional[EmailStr] = None
+    contact_email: Optional[str] = Field(None, max_length=255, description="Contact email")
     contact_phone: Optional[str] = Field(None, max_length=20)
     address: Optional[str] = Field(None, max_length=500)
+
+    @field_validator('contact_email', mode='before')
+    @classmethod
+    def validate_email(cls, v):
+        if v == "" or v is None:
+            return None
+        try:
+            EmailStr.validate(v)
+        except:
+            raise ValueError("Invalid email address")
+        return v
 
 
 class EnterpriseUpdate(BaseModel):
@@ -19,10 +30,21 @@ class EnterpriseUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     industry: Optional[str] = Field(None, max_length=100)
     domain: Optional[str] = Field(None, max_length=255)
-    contact_email: Optional[EmailStr] = None
+    contact_email: Optional[str] = Field(None, max_length=255)
     contact_phone: Optional[str] = Field(None, max_length=20)
     address: Optional[str] = Field(None, max_length=500)
     status: Optional[str] = Field(None, pattern="^(active|inactive|archived)$")
+
+    @field_validator('contact_email', mode='before')
+    @classmethod
+    def validate_email(cls, v):
+        if v == "" or v is None:
+            return None
+        try:
+            EmailStr.validate(v)
+        except:
+            raise ValueError("Invalid email address")
+        return v
 
 
 class EnterpriseResponse(BaseModel):
