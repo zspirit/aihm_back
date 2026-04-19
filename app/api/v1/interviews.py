@@ -370,6 +370,50 @@ async def get_transcription(
     )
 
 
+@router.get("/interviews/{interview_id}/transcription/download")
+async def download_transcription(
+    interview_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Download transcription as text file."""
+    result = await db.execute(
+        select(Interview).where(Interview.id == interview_id, Interview.tenant_id == tenant_id)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Interview introuvable")
+
+    trans_result = await db.execute(
+        select(Transcription).where(Transcription.interview_id == interview_id)
+    )
+    transcription = trans_result.scalar_one_or_none()
+    if not transcription:
+        raise HTTPException(status_code=404, detail="Transcription non disponible")
+
+    # Format transcription as readable text
+    content = f"TRANSCRIPTION - ENTRETIEN {interview_id}\n"
+    content += f"Langue détectée: {transcription.language_detected or 'Inconnue'}\n"
+    content += f"Confiance: {transcription.confidence_score or 0:.1%}\n"
+    content += "=" * 80 + "\n\n"
+
+    if transcription.segments and isinstance(transcription.segments, dict):
+        if "segments" in transcription.segments:
+            for seg in transcription.segments["segments"]:
+                content += f"[{seg.get('question_id', '?')}] {seg.get('question_text', '')}\n"
+                content += f"Réponse: {seg.get('answer_text', '')}\n"
+                content += f"Durée: ~{seg.get('duration_estimate_seconds', '?')}s\n\n"
+        else:
+            content += transcription.full_text
+    else:
+        content += transcription.full_text
+
+    return Response(
+        content=content.encode("utf-8"),
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="transcription_{interview_id}.txt"'},
+    )
+
+
 @router.get("/interviews/{interview_id}/analysis", response_model=AnalysisResponse)
 async def get_analysis(
     interview_id: UUID,
@@ -428,11 +472,12 @@ async def get_report(
 
 
 @router.get("/interviews/{interview_id}/audio")
-async def get_audio(
+async def stream_audio(
     interview_id: UUID,
     tenant_id: UUID = Depends(get_tenant_id),
     db: AsyncSession = Depends(get_db),
 ):
+    """Stream audio file (plays in browser)."""
     result = await db.execute(
         select(Interview).where(Interview.id == interview_id, Interview.tenant_id == tenant_id)
     )
@@ -456,6 +501,39 @@ async def get_audio(
         content=data,
         media_type="audio/mpeg",
         headers={"Content-Disposition": f'inline; filename="interview_{interview_id}.mp3"'},
+    )
+
+
+@router.get("/interviews/{interview_id}/audio/download")
+async def download_audio(
+    interview_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Download audio file through server (forces download)."""
+    result = await db.execute(
+        select(Interview).where(Interview.id == interview_id, Interview.tenant_id == tenant_id)
+    )
+    interview = result.scalar_one_or_none()
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview introuvable")
+
+    if not interview.audio_file_path:
+        raise HTTPException(status_code=404, detail="Audio non disponible")
+
+    parts = interview.audio_file_path.split("/", 1)
+    if len(parts) != 2:
+        raise HTTPException(status_code=404, detail="Chemin audio invalide")
+
+    try:
+        data = download_file(parts[0], parts[1])
+    except Exception:
+        raise HTTPException(status_code=404, detail="Fichier audio introuvable")
+
+    return Response(
+        content=data,
+        media_type="audio/mpeg",
+        headers={"Content-Disposition": f'attachment; filename="entretien_{interview_id}.mp3"'},
     )
 
 
