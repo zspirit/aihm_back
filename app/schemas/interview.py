@@ -12,8 +12,11 @@ class InterviewCreate(BaseModel):
 class InterviewResponse(BaseModel):
     id: str
     candidate_id: str
+    candidate_name: str | None = None
     position_id: str
+    position_title: str | None = None
     status: str
+    audio_file_path: str | None = None
     scheduled_at: datetime | None
     started_at: datetime | None
     ended_at: datetime | None
@@ -21,6 +24,8 @@ class InterviewResponse(BaseModel):
     questions_asked: list | dict | None
     attempt_number: int
     created_at: datetime
+    transcription: "TranscriptionResponse | None" = None
+    analysis: "AnalysisResponse | None" = None
 
     model_config = {"from_attributes": True}
 

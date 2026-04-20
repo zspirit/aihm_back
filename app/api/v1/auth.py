@@ -103,6 +103,11 @@ async def register(request: Request, data: RegisterRequest, db: AsyncSession = D
     )
 
 
+@router.options("/login")
+async def login_options():
+    return {"status": "ok"}
+
+
 @router.post("/login", response_model=TokenResponse)
 @limiter.limit("5/minute")
 async def login(request: Request, data: LoginRequest, db: AsyncSession = Depends(get_db)):

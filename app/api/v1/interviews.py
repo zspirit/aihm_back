@@ -320,17 +320,63 @@ async def get_interview(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(Interview).where(Interview.id == interview_id, Interview.tenant_id == tenant_id)
+        select(
+            Interview,
+            Candidate.name.label("candidate_name"),
+            Position.title.label("position_title"),
+        )
+        .join(Candidate, Interview.candidate_id == Candidate.id)
+        .join(Position, Interview.position_id == Position.id)
+        .where(Interview.id == interview_id, Interview.tenant_id == tenant_id)
     )
-    interview = result.scalar_one_or_none()
-    if not interview:
+    row = result.one_or_none()
+    if not row:
         raise HTTPException(status_code=404, detail="Interview introuvable")
+
+    interview = row.Interview
+
+    # Fetch transcription and analysis
+    trans_result = await db.execute(
+        select(Transcription).where(Transcription.interview_id == interview_id)
+    )
+    transcription = trans_result.scalar_one_or_none()
+
+    analysis_result = await db.execute(
+        select(Analysis).where(Analysis.interview_id == interview_id)
+    )
+    analysis = analysis_result.scalar_one_or_none()
+
+    transcription_response = None
+    if transcription:
+        transcription_response = TranscriptionResponse(
+            id=str(transcription.id),
+            interview_id=str(transcription.interview_id),
+            full_text=transcription.full_text,
+            segments=transcription.segments,
+            language_detected=transcription.language_detected,
+            confidence_score=transcription.confidence_score,
+        )
+
+    analysis_response = None
+    if analysis:
+        analysis_response = AnalysisResponse(
+            id=str(analysis.id),
+            interview_id=str(analysis.interview_id),
+            skills_extracted=analysis.skills_extracted,
+            experience_examples=analysis.experience_examples,
+            communication_indicators=analysis.communication_indicators,
+            scores=analysis.scores,
+            score_explanations=analysis.score_explanations,
+        )
 
     return InterviewResponse(
         id=str(interview.id),
         candidate_id=str(interview.candidate_id),
+        candidate_name=row.candidate_name,
         position_id=str(interview.position_id),
+        position_title=row.position_title,
         status=interview.status,
+        audio_file_path=interview.audio_file_path,
         scheduled_at=interview.scheduled_at,
         started_at=interview.started_at,
         ended_at=interview.ended_at,
@@ -338,6 +384,8 @@ async def get_interview(
         questions_asked=interview.questions_asked,
         attempt_number=interview.attempt_number,
         created_at=interview.created_at,
+        transcription=transcription_response,
+        analysis=analysis_response,
     )
 
 
@@ -412,6 +460,34 @@ async def download_transcription(
         media_type="text/plain; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="transcription_{interview_id}.txt"'},
     )
+
+
+@router.post("/interviews/{interview_id}/transcription/regenerate")
+async def regenerate_transcription(
+    interview_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Regenerate transcription for a completed interview."""
+    result = await db.execute(
+        select(Interview).where(Interview.id == interview_id, Interview.tenant_id == tenant_id)
+    )
+    interview = result.scalar_one_or_none()
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview introuvable")
+
+    if interview.status != "completed":
+        raise HTTPException(status_code=400, detail="Seuls les entretiens termines peuvent avoir leur transcription regeneree")
+
+    if not interview.audio_file_path:
+        raise HTTPException(status_code=400, detail="Aucun fichier audio disponible")
+
+    # Queue transcription worker
+    from app.workers.transcription import transcribe_audio
+
+    transcribe_audio.delay(str(interview.id))
+
+    return {"message": "Regeneration de la transcription lancee"}
 
 
 @router.get("/interviews/{interview_id}/analysis", response_model=AnalysisResponse)
