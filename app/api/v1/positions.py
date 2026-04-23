@@ -23,6 +23,7 @@ from app.schemas.position import (
     PositionDuplicateRequest,
     PositionImportTextRequest,
     PositionResponse,
+    PositionStatsResponse,
     PositionUpdate,
     normalize_skills,
 )
@@ -61,11 +62,46 @@ def _apply_sla(position: Position, sla_days: int | None) -> None:
     position.sla_deadline = position.created_at + timedelta(days=sla_days)
 
 
-def _build_position_response(position, candidate_count: int = 0) -> PositionResponse:
+def _initials(name: str | None) -> str:
+    """Convertit 'Amélie Roux' en 'AR'. 'X' si name vide/None."""
+    if not name:
+        return "??"
+    parts = [p for p in name.strip().split() if p]
+    if len(parts) == 1:
+        return parts[0][:2].upper()
+    return (parts[0][0] + parts[-1][0]).upper()
+
+
+# Buckets funnel — on regroupe les pipeline_status bas-niveau en 3 compartiments
+# métier : CVs (tout candidat comptant dans le poste), Entretiens, Offres.
+_INTERVIEW_STATUSES = {
+    "call_scheduled", "interview", "interview_scheduled", "interviewed",
+    "interview_done", "interview_pending",
+}
+_OFFER_STATUSES = {
+    "offer", "offer_sent", "offer_pending", "offer_accepted",
+    "hired", "accepted",
+}
+
+
+def _build_position_response(
+    position,
+    candidate_count: int = 0,
+    enterprise_name: str | None = None,
+    enterprise_location: str | None = None,
+    pipeline_counts: dict[str, int] | None = None,
+    avg_score: float | None = None,
+    top_avatars: list[str] | None = None,
+) -> PositionResponse:
     """Build a PositionResponse with normalized skills (backward compatible).
 
     Inclut level / sla_days / sla_deadline ; `urgency_level` est calculé
     automatiquement par le @computed_field de PositionResponse à la sérialisation.
+
+    Les champs Postes v2 (enterprise_name, pipeline_counts, avg_score,
+    top_avatars) sont optionnels — quand non fournis, ils prennent leurs
+    defaults (None / 0 / []) pour que les appels existants (create_position,
+    update_position, duplicate) continuent de fonctionner.
     """
     return PositionResponse(
         id=str(position.id),
@@ -84,6 +120,11 @@ def _build_position_response(position, candidate_count: int = 0) -> PositionResp
         created_by=str(position.created_by),
         created_at=position.created_at,
         candidate_count=candidate_count,
+        enterprise_name=enterprise_name,
+        enterprise_location=enterprise_location,
+        pipeline_counts=pipeline_counts or {"cvs": 0, "interviews": 0, "offers": 0},
+        avg_score=avg_score,
+        top_avatars=top_avatars or [],
     )
 
 
@@ -127,12 +168,23 @@ def _urgency_sql_filter(urgency: str):
 
 @router.get("", response_model=PaginatedPositions)
 async def list_positions(
-    status_filter: str | None = None,
+    status_filter: Literal[
+        "draft", "active", "paused", "filled", "archived"
+    ] | None = Query(
+        None,
+        description="Filtre sur le statut du poste. "
+        "Valeurs: draft (brouillon), active (actif), paused (en pause), "
+        "filled (pourvu), archived (archivé).",
+    ),
     search: str | None = Query(None, description="Search in title and description"),
     urgency: Literal["normal", "soon", "urgent", "late"] | None = Query(
         None,
         description="Filtre sur le niveau d'urgence dérivé de sla_deadline. "
         "Exclut les postes sans SLA configuré.",
+    ),
+    enterprise_id: UUID | None = Query(
+        None,
+        description="Filtre sur l'entreprise cliente (Position.enterprise_id).",
     ),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=500),
@@ -145,6 +197,10 @@ async def list_positions(
     if status_filter:
         query = query.where(Position.status == status_filter)
         count_query = count_query.where(Position.status == status_filter)
+
+    if enterprise_id:
+        query = query.where(Position.enterprise_id == enterprise_id)
+        count_query = count_query.where(Position.enterprise_id == enterprise_id)
 
     if urgency:
         urgency_clause = _urgency_sql_filter(urgency)
@@ -166,30 +222,176 @@ async def list_positions(
     query = query.offset((page - 1) * page_size).limit(page_size)
 
     result = await db.execute(query)
-    positions = result.scalars().all()
+    positions = list(result.scalars().all())
+
+    # Batch lookup : noms + adresses d'entreprises (évite N+1)
+    ent_ids = [p.enterprise_id for p in positions if p.enterprise_id]
+    ent_info_by_id: dict = {}
+    if ent_ids:
+        from app.models.enterprise import Enterprise
+        ent_rows = await db.execute(
+            select(Enterprise.id, Enterprise.name, Enterprise.address)
+            .where(Enterprise.id.in_(ent_ids))
+        )
+        ent_info_by_id = {row[0]: (row[1], row[2]) for row in ent_rows.all()}
 
     responses = []
     for pos in positions:
-        # Count candidates linked via Application table OR direct position_id
-        count_result = await db.execute(
-            select(func.count(func.distinct(Candidate.id)))
-            .select_from(Candidate)
-            .outerjoin(Application, Application.candidate_id == Candidate.id)
-            .where(
-                or_(
-                    Candidate.position_id == pos.id,
-                    Application.position_id == pos.id,
-                )
+        enriched = await _compute_position_row_enrichment(db, pos)
+        ent_info = ent_info_by_id.get(pos.enterprise_id) if pos.enterprise_id else None
+        responses.append(
+            _build_position_response(
+                pos,
+                candidate_count=enriched["candidate_count"],
+                enterprise_name=ent_info[0] if ent_info else None,
+                enterprise_location=ent_info[1] if ent_info else None,
+                pipeline_counts=enriched["pipeline_counts"],
+                avg_score=enriched["avg_score"],
+                top_avatars=enriched["top_avatars"],
             )
         )
-        count = count_result.scalar()
-        responses.append(_build_position_response(pos, candidate_count=count))
 
     return PaginatedPositions(
         items=responses,
         total=total,
         page=page,
         page_size=page_size,
+    )
+
+
+async def _compute_position_row_enrichment(db: AsyncSession, pos: Position) -> dict:
+    """Calcule candidate_count, pipeline_counts, avg_score, top_avatars pour 1 poste.
+
+    Stratégie : 3 petites queries — moins élégant qu'une grosse jointure, mais plus
+    lisible et SQLite-friendly pour les tests. Optimisable (batch) si perf problème.
+    """
+    # 1. Liste des candidats rattachés (via Application OR position_id direct)
+    cand_rows = await db.execute(
+        select(Candidate.id, Candidate.name, Candidate.pipeline_status)
+        .select_from(Candidate)
+        .outerjoin(Application, Application.candidate_id == Candidate.id)
+        .where(or_(Candidate.position_id == pos.id, Application.position_id == pos.id))
+        .distinct()
+    )
+    cands = cand_rows.all()
+    cvs = len(cands)
+
+    # 2. Pipeline buckets : interviews / offers
+    interviews = sum(1 for c in cands if c[2] in _INTERVIEW_STATUSES)
+    offers = sum(1 for c in cands if c[2] in _OFFER_STATUSES)
+
+    # 3. Top 3 avatars (ordre alphabétique par nom — stable et déterministe)
+    sorted_cands = sorted(cands, key=lambda c: (c[1] or "").lower())
+    top_avatars = [_initials(c[1]) for c in sorted_cands[:3]]
+
+    # 4. Score moyen : moyenne des meilleurs MatchScore.score par candidat de ce poste
+    avg_score: float | None = None
+    ms_row = await db.execute(
+        select(func.avg(MatchScore.score))
+        .where(MatchScore.position_id == pos.id)
+    )
+    avg_raw = ms_row.scalar()
+    if avg_raw is not None:
+        # Les scores sont 0-100 (cf. service matching) → on les garde tels quels.
+        # Si le service stocke 0-1, la conversion est triviale (* 100).
+        avg_score = (
+            float(avg_raw) * 100.0 if float(avg_raw) <= 1.0 else float(avg_raw)
+        )
+
+    return {
+        "candidate_count": cvs,
+        "pipeline_counts": {"cvs": cvs, "interviews": interviews, "offers": offers},
+        "avg_score": avg_score,
+        "top_avatars": top_avatars,
+    }
+
+
+@router.get("/stats", response_model=PositionStatsResponse)
+async def position_stats(
+    tenant_id: UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> PositionStatsResponse:
+    """Stats pour la KPI strip + count badges des tabs de Postes v2.
+
+    Totaux par statut, médiane candidats/poste (sur actifs), médiane temps
+    de pourvoi (sur filled), nombre de postes en alerte (urgent + late).
+    """
+    # 1. Totaux par statut (1 query groupby)
+    status_rows = await db.execute(
+        select(Position.status, func.count())
+        .where(Position.tenant_id == tenant_id)
+        .group_by(Position.status)
+    )
+    counts_by_status: dict[str, int] = {row[0]: row[1] for row in status_rows.all()}
+    total_all = sum(counts_by_status.values())
+
+    # 2. Postes en alerte : sla_deadline NOT NULL AND sla_deadline <= now() + 2j
+    now = datetime.now(timezone.utc)
+    alert_row = await db.execute(
+        select(func.count()).where(
+            Position.tenant_id == tenant_id,
+            Position.sla_deadline.is_not(None),
+            Position.sla_deadline <= now + timedelta(days=2),
+        )
+    )
+    alert_count = int(alert_row.scalar() or 0)
+
+    # 3. Médiane candidats par poste actif : on remonte les counts par position,
+    # on prend la médiane en Python (SQLite ne fait pas percentile_cont proprement).
+    cand_per_pos_rows = await db.execute(
+        select(Position.id, func.count(func.distinct(Candidate.id)))
+        .select_from(Position)
+        .outerjoin(Application, Application.position_id == Position.id)
+        .outerjoin(
+            Candidate,
+            or_(
+                Candidate.position_id == Position.id,
+                Candidate.id == Application.candidate_id,
+            ),
+        )
+        .where(Position.tenant_id == tenant_id, Position.status == "active")
+        .group_by(Position.id)
+    )
+    counts = sorted([row[1] for row in cand_per_pos_rows.all()])
+    median_candidates = None
+    if counts:
+        mid = len(counts) // 2
+        median_candidates = (
+            counts[mid] if len(counts) % 2 == 1 else (counts[mid - 1] + counts[mid]) // 2
+        )
+
+    # 4. Médiane temps de pourvoi = days(updated_at - created_at) pour filled.
+    # On approxime via (now - created_at) en l'absence de filled_at dédié.
+    # Note: heuristique — à affiner si un champ filled_at est ajouté plus tard.
+    ttf_rows = await db.execute(
+        select(Position.created_at)
+        .where(Position.tenant_id == tenant_id, Position.status == "filled")
+    )
+    deltas = []
+    for row in ttf_rows.all():
+        if row[0]:
+            created = row[0]
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            deltas.append((now - created).days)
+    deltas.sort()
+    median_ttf = None
+    if deltas:
+        mid = len(deltas) // 2
+        median_ttf = (
+            deltas[mid] if len(deltas) % 2 == 1 else (deltas[mid - 1] + deltas[mid]) // 2
+        )
+
+    return PositionStatsResponse(
+        total=total_all,
+        active_count=counts_by_status.get("active", 0),
+        paused_count=counts_by_status.get("paused", 0),
+        filled_count=counts_by_status.get("filled", 0),
+        archived_count=counts_by_status.get("archived", 0),
+        draft_count=counts_by_status.get("draft", 0),
+        median_time_to_fill_days=median_ttf,
+        median_candidates_per_position=median_candidates,
+        alert_count=alert_count,
     )
 
 

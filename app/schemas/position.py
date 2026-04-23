@@ -128,6 +128,24 @@ class PositionResponse(BaseModel):
     created_at: datetime
     candidate_count: int = 0
 
+    # --- Postes v2 (Chantier 13+) ---
+    enterprise_name: str | None = None
+    """Nom de l'entreprise cliente rattachée (via enterprise_id). None sinon."""
+
+    enterprise_location: str | None = None
+    """Adresse / ville de l'entreprise cliente (champ address). None sinon."""
+
+    pipeline_counts: dict[str, int] = Field(
+        default_factory=lambda: {"cvs": 0, "interviews": 0, "offers": 0}
+    )
+    """Agrégations funnel pour la ligne de table: cvs / interviews / offers."""
+
+    avg_score: float | None = None
+    """Score moyen 0-100 des candidats du poste. None si aucun candidat scoré."""
+
+    top_avatars: list[str] = Field(default_factory=list)
+    """Initiales (2 lettres) des 3 premiers candidats pour la pile d'avatars."""
+
     @computed_field  # type: ignore[misc]
     @property
     def urgency_level(self) -> UrgencyLevel | None:
@@ -145,6 +163,28 @@ class PaginatedPositions(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class PositionStatsResponse(BaseModel):
+    """Stats agrégées pour la KPI strip et les count badges des tabs."""
+
+    # Counts par tab
+    total: int = 0
+    active_count: int = 0
+    paused_count: int = 0
+    filled_count: int = 0
+    archived_count: int = 0
+    draft_count: int = 0
+
+    # KPI strip
+    median_time_to_fill_days: int | None = None
+    """Médiane du temps de pourvoi (created_at → status=filled) sur les postes fermés."""
+
+    median_candidates_per_position: int | None = None
+    """Médiane du nombre de candidats par poste actif."""
+
+    alert_count: int = 0
+    """Postes en alerte : urgency_level IN (urgent, late)."""
 
 
 class PositionImportTextRequest(BaseModel):
