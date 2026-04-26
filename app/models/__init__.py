@@ -4,6 +4,9 @@ from app.models.approval_request import ApprovalRequest
 from app.models.audit_log import AuditLog
 from app.models.candidate import Candidate
 from app.models.candidate_comment import CandidateComment
+from app.models.email_template import EmailLog, EmailTemplate
+from app.models.email_sequence import EmailSequence, SequenceStep, SequenceEnrollment
+from app.models.user_integration import UserIntegration
 from app.models.consent import Consent
 from app.models.enterprise import Enterprise
 from app.models.interview import Interview
@@ -31,6 +34,12 @@ __all__ = [
     "Offer",
     "Candidate",
     "CandidateComment",
+    "EmailTemplate",
+    "EmailLog",
+    "EmailSequence",
+    "SequenceStep",
+    "SequenceEnrollment",
+    "UserIntegration",
     "Application",
     "ApprovalRequest",
     "Consent",

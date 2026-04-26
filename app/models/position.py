@@ -45,6 +45,15 @@ class Position(Base):
     sla_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     custom_questions: Mapped[dict] = mapped_column(JSONB, default=list)
     status: Mapped[str] = mapped_column(String(50), default="draft")
+    # Workflow validation — Phase 1.5 (optionnel, bypass-able)
+    # draft -> pending_approval -> approved -> (then status=active)
+    workflow_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    submitted_for_approval_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Phase 3.1 — slug pour career page publique
+    public_slug: Mapped[str | None] = mapped_column(String(200), nullable=True)
     deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     auto_advance_threshold: Mapped[int | None] = mapped_column(Integer, nullable=True)
     auto_reject_threshold: Mapped[int | None] = mapped_column(Integer, nullable=True)

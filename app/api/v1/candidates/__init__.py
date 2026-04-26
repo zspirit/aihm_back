@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from .analytics import router as analytics_router
 from .comments import router as comments_router
+from .import_text import router as import_text_router
 from .consent import router as consent_router
 from .crud import router as crud_router
 from .cv import router as cv_router
@@ -18,4 +19,7 @@ router.include_router(consent_router)
 router.include_router(analytics_router)
 router.include_router(profile_router)
 router.include_router(matching_router)
-router.include_router(feedb
+router.include_router(feedback_router)
+router.include_router(gdpr_router)
+router.include_router(comments_router)
+router.include_router(import_text_router)
