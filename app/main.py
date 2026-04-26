@@ -121,6 +121,7 @@ from app.api.v1.metrics import router as metrics_router
 from app.api.v1.dashboard import router as dashboard_router
 from app.api.v1.shortlists import router as shortlists_router
 from app.api.v1.approvals import router as approvals_router
+from app.api.v1.activity import router as activity_router
 
 app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
 app.include_router(applications_router, prefix=settings.API_V1_PREFIX)
@@ -149,6 +150,7 @@ app.include_router(metrics_router, prefix=settings.API_V1_PREFIX)
 app.include_router(dashboard_router, prefix=settings.API_V1_PREFIX)
 app.include_router(shortlists_router, prefix=settings.API_V1_PREFIX)
 app.include_router(approvals_router, prefix=settings.API_V1_PREFIX)
+app.include_router(activity_router, prefix=settings.API_V1_PREFIX)
 
 
 # --- Health Check enrichi ---
