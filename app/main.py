@@ -119,6 +119,8 @@ from app.api.v1.settings import router as settings_router
 from app.api.v1.skills import router as skills_router
 from app.api.v1.metrics import router as metrics_router
 from app.api.v1.dashboard import router as dashboard_router
+from app.api.v1.shortlists import router as shortlists_router
+from app.api.v1.approvals import router as approvals_router
 
 app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
 app.include_router(applications_router, prefix=settings.API_V1_PREFIX)
@@ -145,6 +147,8 @@ app.include_router(settings_router, prefix=settings.API_V1_PREFIX)
 app.include_router(skills_router, prefix=settings.API_V1_PREFIX)
 app.include_router(metrics_router, prefix=settings.API_V1_PREFIX)
 app.include_router(dashboard_router, prefix=settings.API_V1_PREFIX)
+app.include_router(shortlists_router, prefix=settings.API_V1_PREFIX)
+app.include_router(approvals_router, prefix=settings.API_V1_PREFIX)
 
 
 # --- Health Check enrichi ---

@@ -1,5 +1,6 @@
 from app.models.analysis import Analysis
 from app.models.application import Application
+from app.models.approval_request import ApprovalRequest
 from app.models.audit_log import AuditLog
 from app.models.candidate import Candidate
 from app.models.candidate_comment import CandidateComment
@@ -19,6 +20,7 @@ from app.models.bulk_import import BulkImport
 from app.models.notification import Notification
 from app.models.match_score import MatchScore, MatchSession
 from app.models.scorecard import Scorecard
+from app.models.shortlist import Shortlist, ShortlistCandidate
 from app.models.skill import Skill
 
 __all__ = [
@@ -30,6 +32,7 @@ __all__ = [
     "Candidate",
     "CandidateComment",
     "Application",
+    "ApprovalRequest",
     "Consent",
     "Interview",
     "Transcription",
@@ -40,4 +43,11 @@ __all__ = [
     "PasswordResetToken",
     "EmailVerificationToken",
     "BulkImport",
-    "Notific
+    "Notification",
+    "MatchScore",
+    "MatchSession",
+    "Scorecard",
+    "Shortlist",
+    "ShortlistCandidate",
+    "Skill",
+]
