@@ -44,34 +44,28 @@ async def get_position_metrics(
     )
     total_applications = applications.scalar() or 0
 
-    # Count interviews
+    # Count interviews — Interview a un position_id direct (pas via Application)
     interviews = await db.execute(
-        select(func.count(Interview.id)).where(
-            and_(
-                Application.position_id == position_id,
-                Interview.application_id == Application.id,
-            )
-        )
+        select(func.count(Interview.id))
+        .where(Interview.position_id == position_id)
     )
     total_interviews = interviews.scalar() or 0
 
     # Count offers
     offers = await db.execute(
-        select(func.count(Offer.id)).where(
-            and_(
-                Application.position_id == position_id,
-                Offer.application_id == Application.id,
-            )
-        )
+        select(func.count(Offer.id))
+        .join(Application, Offer.application_id == Application.id)
+        .where(Application.position_id == position_id)
     )
     total_offers = offers.scalar() or 0
 
     # Count signed offers
     signed_offers = await db.execute(
-        select(func.count(Offer.id)).where(
+        select(func.count(Offer.id))
+        .join(Application, Offer.application_id == Application.id)
+        .where(
             and_(
                 Application.position_id == position_id,
-                Offer.application_id == Application.id,
                 Offer.status == "signed",
             )
         )
@@ -80,10 +74,11 @@ async def get_position_metrics(
 
     # Average salary from offers
     avg_salary = await db.execute(
-        select(func.avg(Offer.salary_min)).where(
+        select(func.avg(Offer.salary_min))
+        .join(Application, Offer.application_id == Application.id)
+        .where(
             and_(
                 Application.position_id == position_id,
-                Offer.application_id == Application.id,
                 Offer.salary_min.isnot(None),
             )
         )
@@ -144,22 +139,22 @@ async def get_enterprise_metrics(
     )
     candidate_count = total_candidates.scalar() or 0
 
-    # Count applications across enterprise positions
+    # Count applications across enterprise positions — JOIN explicite
     applications = await db.execute(
-        select(func.count(Application.id)).where(
-            Position.enterprise_id == enterprise_id,
-            Application.position_id == Position.id,
-        )
+        select(func.count(Application.id))
+        .join(Position, Application.position_id == Position.id)
+        .where(Position.enterprise_id == enterprise_id)
     )
     app_count = applications.scalar() or 0
 
     # Count signed offers across enterprise
     signed = await db.execute(
-        select(func.count(Offer.id)).where(
+        select(func.count(Offer.id))
+        .join(Application, Offer.application_id == Application.id)
+        .join(Position, Application.position_id == Position.id)
+        .where(
             and_(
                 Position.enterprise_id == enterprise_id,
-                Application.position_id == Position.id,
-                Offer.application_id == Application.id,
                 Offer.status == "signed",
             )
         )
