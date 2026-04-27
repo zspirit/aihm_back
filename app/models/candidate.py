@@ -53,6 +53,16 @@ class Candidate(Base):
     # Anonymisation
     is_anonymized: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
+    # Phase 4.2 V1_ROADMAP — DEI opt-in (cf. migration e1f2a4b5c6d7)
+    # Tous nullable / opt-in : RGPD-compliant. Anonymisés avant scoring.
+    dei_consent: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    gender: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    age_range: Mapped[str | None] = mapped_column(String(20), nullable=True)  # 18-25, 26-35, ...
+    nationality: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    disability_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
     position = relationship("Position", back_populates="candidates")
     consents = relationship("Consent", back_populates="candidate", cascade="all, delete-orphan")
     interviews = relationship("Interview", back_populates="candidate", cascade="all, delete-orphan")
