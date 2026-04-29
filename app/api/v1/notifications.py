@@ -1,6 +1,11 @@
+import asyncio
+import json
+import logging
+import time
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,6 +14,9 @@ from app.core.dependencies import get_current_user
 from app.models.notification import Notification
 from app.models.user import User
 from app.schemas.notification import NotificationResponse, PaginatedNotifications
+from app.services.notification_pubsub import subscribe
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
@@ -124,3 +132,99 @@ async def mark_all_read(
     await db.flush()
 
     return {"status": "ok", "count": count}
+
+
+# ─── Server-Sent Events stream ─────────────────────────────────────────────────
+# Push real-time des notifications via Redis pub/sub.
+# Côté client : utiliser `@microsoft/fetch-event-source` (supporte Authorization
+# header, contrairement à l'EventSource natif).
+#
+# Format SSE :
+#   event: notification
+#   data: {...JSON...}
+#
+#   :ping        ← heartbeat toutes les 15s (commentaire SSE, ignoré par client)
+#
+# La DB reste source de vérité : si le client manque un event (offline,
+# reconnect en cours), il rattrape via GET /notifications.
+
+_HEARTBEAT_INTERVAL_S = 15
+
+
+@router.get("/stream")
+async def notifications_stream(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """SSE stream — push real-time des notifications du user.
+
+    Souscrit aux canaux Redis :
+    - `notif:user:{user_id}`   → notifs personnelles
+    - `notif:tenant:{tenant_id}` → broadcast tenant
+
+    Heartbeat 15s pour éviter que les proxies coupent la connexion.
+    """
+    user_id = current_user.id
+    tenant_id = current_user.tenant_id
+    channels = [f"notif:user:{user_id}", f"notif:tenant:{tenant_id}"]
+
+    async def event_gen():
+        try:
+            async with subscribe(channels) as pubsub:
+                # Event 'connected' initial (utile pour le client qui veut
+                # savoir qu'on est bien hooked)
+                yield (
+                    "event: connected\n"
+                    f"data: {json.dumps({'user_id': str(user_id)})}\n\n"
+                )
+
+                last_heartbeat = time.monotonic()
+
+                while True:
+                    if await request.is_disconnected():
+                        logger.info("sse_client_disconnected", user_id=str(user_id))
+                        break
+
+                    # Poll Redis avec timeout court pour pouvoir checker disconnect
+                    try:
+                        msg = await pubsub.get_message(
+                            ignore_subscribe_messages=True, timeout=1.0
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "sse_pubsub_get_message_error",
+                            exc_info=exc,
+                            user_id=str(user_id),
+                        )
+                        msg = None
+                        await asyncio.sleep(1)
+
+                    if msg and msg.get("type") == "message":
+                        # data is already str (decode_responses=True dans le client)
+                        payload_str = msg["data"]
+                        if isinstance(payload_str, bytes):
+                            payload_str = payload_str.decode("utf-8")
+                        yield f"event: notification\ndata: {payload_str}\n\n"
+
+                    # Heartbeat
+                    now = time.monotonic()
+                    if now - last_heartbeat >= _HEARTBEAT_INTERVAL_S:
+                        yield ": ping\n\n"
+                        last_heartbeat = now
+        except asyncio.CancelledError:
+            logger.info("sse_stream_cancelled", user_id=str(user_id))
+            raise
+        except Exception:
+            logger.exception("sse_stream_unexpected_error", user_id=str(user_id))
+            raise
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            # Désactive le buffering nginx (essentiel pour SSE en prod)
+            "X-Accel-Buffering": "no",
+        },
+    )

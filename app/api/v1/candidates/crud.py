@@ -244,8 +244,7 @@ async def list_candidates(
 
 @router.post(
     "/positions/{position_id}/candidates",
-    response_model=CandidateResponse,
-    status_code=status.HTTP_201_CREATED,
+    status_code=status.HTTP_202_ACCEPTED,
 )
 async def create_candidate(
     position_id: UUID,
@@ -256,6 +255,14 @@ async def create_candidate(
     current_user: User = Depends(require_role("admin", "recruiter")),
     db: AsyncSession = Depends(get_db),
 ):
+    """Crée un candidat. Si CV uploadé : retour **202 Accepted** + analyse async.
+
+    L'analyse IA tourne en background via Celery (`cv.process`) et émet
+    une notification `candidate.cv_analyzed` (succès) ou `candidate.cv_failed`
+    (erreur) au user créateur quand elle est finie.
+
+    Le client SSE (`/notifications/stream`) reçoit l'event en push real-time.
+    """
     result = await db.execute(
         select(Position).where(
             Position.id == position_id, Position.tenant_id == current_user.tenant_id
@@ -282,6 +289,9 @@ async def create_candidate(
             cv, settings.S3_BUCKET_CVS, f"{current_user.tenant_id}/{position_id}"
         )
 
+    # Si on a un CV à processer, on bump le status immédiatement
+    initial_status = "cv_processing" if cv_path else "new"
+
     candidate = Candidate(
         tenant_id=current_user.tenant_id,
         position_id=position_id,
@@ -289,6 +299,7 @@ async def create_candidate(
         email=email,
         phone=phone,
         cv_file_path=cv_path,
+        pipeline_status=initial_status,
     )
     db.add(candidate)
     await db.flush()
@@ -305,7 +316,11 @@ async def create_candidate(
         try:
             from app.workers.cv_processing import process_cv
 
-            process_cv.delay(str(candidate.id))
+            process_cv.delay(
+                str(candidate.id),
+                str(position_id),
+                creator_user_id=str(current_user.id),
+            )
         except Exception:
             pass
 
@@ -322,6 +337,47 @@ async def create_candidate(
         pipeline_status=candidate.pipeline_status,
         created_at=candidate.created_at,
     )
+
+
+@router.post(
+    "/candidates/{candidate_id}/reprocess-cv",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def reprocess_candidate_cv(
+    candidate_id: UUID,
+    current_user: User = Depends(require_role("admin", "recruiter")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Relance l'analyse IA d'un CV (utile après un cv_failed)."""
+    result = await db.execute(
+        select(Candidate).where(
+            Candidate.id == candidate_id,
+            Candidate.tenant_id == current_user.tenant_id,
+        )
+    )
+    candidate = result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidat introuvable")
+    if not candidate.cv_file_path:
+        raise HTTPException(
+            status_code=400, detail="Pas de CV uploadé pour ce candidat"
+        )
+
+    candidate.pipeline_status = "cv_processing"
+    await db.commit()
+
+    try:
+        from app.workers.cv_processing import process_cv
+
+        process_cv.delay(
+            str(candidate.id),
+            str(candidate.position_id) if candidate.position_id else None,
+            creator_user_id=str(current_user.id),
+        )
+    except Exception:
+        raise HTTPException(status_code=503, detail="Worker Celery indisponible")
+
+    return {"status": "queued", "candidate_id": str(candidate.id)}
 
 
 @router.post(

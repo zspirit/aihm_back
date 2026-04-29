@@ -50,8 +50,13 @@ async def import_candidate_from_text(
     email = email_match.group(0) if email_match else None
     phone = phone_match.group(0).strip() if phone_match else None
 
-    # Best effort : appel Claude si dispo (sinon fallback naive)
-    parsed_data = {"raw_text": text[:5000], "imported_via": "import-text"}
+    # Appel Claude pour extraction riche. En cas d'échec, fallback explicite
+    # sur l'extraction naive (regex) et on flag dans parsed_data.
+    parsed_data: dict = {
+        "raw_text": text[:5000],
+        "imported_via": "import-text",
+        "ai_parser_used": False,
+    }
     try:
         from app.services.copilot import call_claude_json
         prompt = f"""Tu es un parseur CV. Extrais du texte ci-dessous un objet JSON STRICT
@@ -68,9 +73,18 @@ TEXTE:
             email = result.get("email") or email
             phone = result.get("phone") or phone
             parsed_data.update(result)
-    except Exception:
-        # Pas grave — on garde l'extraction naive
-        pass
+            parsed_data["ai_parser_used"] = True
+            parsed_data["ai_model"] = "claude-sonnet-4-5"
+    except Exception as exc:
+        # On garde l'extraction naive mais on logue pour debug + on flag
+        # le parsed_data pour que l'UI puisse signaler "parser dégradé".
+        import logging
+        logging.getLogger(__name__).warning(
+            "import_text.claude_parse_failed",
+            exc_info=exc,
+            extra={"text_length": len(text)},
+        )
+        parsed_data["ai_parser_error"] = str(exc)[:200]
 
     if not email and not phone:
         raise HTTPException(
