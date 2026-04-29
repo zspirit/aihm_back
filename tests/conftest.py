@@ -166,18 +166,26 @@ async def client(_setup_db):
     app.dependency_overrides.clear()
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture(autouse=True, scope="session")
 def _disable_rate_limiting():
-    """Disable slowapi rate limiting in tests."""
+    """Disable slowapi rate limiting for the whole test session.
+
+    Session scope: rate-limit state is process-global, so toggling it per-test
+    just adds setup cost (was ~5ms × 789 tests = ~4s saved).
+    """
     from app.core.rate_limit import limiter
     limiter.enabled = False
     yield
     limiter.enabled = True
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture(autouse=True, scope="session")
 def _mock_celery_tasks():
-    """Globally mock all Celery task.delay() to prevent Redis connection in tests."""
+    """Mock all Celery task.delay() once for the whole session.
+
+    Patching 14 worker entrypoints per-test was costing ~10ms × 789 tests = ~8s.
+    These mocks have no test-specific state, so session scope is safe.
+    """
     from unittest.mock import MagicMock, patch
 
     tasks = [
