@@ -1,0 +1,69 @@
+[project]
+name = "aihm-back"
+version = "0.1.0"
+description = "AIHM - AI Hiring Manager Backend"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi[standard]>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30.0",
+    "alembic>=1.14.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.6.0",
+    "email-validator>=2.1.0",
+    "celery[redis]>=5.4.0",
+    "redis>=5.2.0",
+    "python-jose[cryptography]>=3.3.0",
+    "bcrypt>=4.1.0",
+    "psycopg2-binary>=2.9.0",
+    "python-multipart>=0.0.12",
+    "boto3>=1.35.0",
+    "pymupdf>=1.25.0",
+    "python-docx>=1.1.0",
+    "openpyxl>=3.1.0",
+    "anthropic>=0.39.0",
+    "twilio>=9.3.0",
+    "httpx>=0.28.0",
+    "jinja2>=3.1.0",
+    "structlog>=24.4.0",
+    "faster-whisper>=1.0.0",
+    "sentry-sdk[fastapi]>=2.0.0",
+    "slowapi>=0.1.9",
+    "reportlab>=4.2.0",
+    "edge-tts>=6.1.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "pytest-xdist>=3.6.0",
+    "httpx>=0.28.0",
+    "ruff>=0.8.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+"app/api/v1/webhooks.py" = ["N803", "E501"]
+"app/api/v1/webhooks_conversation.py" = ["N803", "E501"]
+"app/main.py" = ["E402"]
+"app/workers/*" = ["E501"]
+"tests/*" = ["E402"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+# xdist is installed but not enabled by default — for a single file the worker
+# spin-up cost (8 Python processes × ~5s import) exceeds the parallelism gain.
+# For the full suite, run: `pytest -n 8 --dist loadfile` (measured 5.8x faster).

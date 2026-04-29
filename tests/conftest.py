@@ -40,10 +40,29 @@ from app.core.security import create_access_token, hash_password  # noqa: E402
 from app.main import app  # noqa: E402
 
 # PostgreSQL required for integration tests (Docker must be running)
-TEST_DATABASE_URL = os.getenv(
+_BASE_TEST_DB_URL = os.getenv(
     "TEST_DATABASE_URL",
     "postgresql+asyncpg://aihm:aihm@localhost:5432/aihm_test",
 )
+
+
+def _per_worker_db_url(base_url: str) -> str:
+    """Append the xdist worker id to the DB name so each worker gets its own DB.
+
+    Single-process runs use PYTEST_XDIST_WORKER='master' (or unset) → no suffix.
+    Parallel runs (-n auto) get gw0, gw1, ... and we suffix accordingly.
+    """
+    worker = os.getenv("PYTEST_XDIST_WORKER", "")
+    if not worker or worker == "master":
+        return base_url
+    # postgresql+asyncpg://user:pwd@host:port/dbname  →  …/dbname_gw0
+    if "/" in base_url:
+        head, _, dbname = base_url.rpartition("/")
+        return f"{head}/{dbname}_{worker}"
+    return base_url
+
+
+TEST_DATABASE_URL = _per_worker_db_url(_BASE_TEST_DB_URL)
 
 test_engine = create_async_engine(TEST_DATABASE_URL, echo=False, poolclass=NullPool)
 TestSession = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
@@ -54,9 +73,47 @@ test_sync_engine = create_engine(_sync_test_url, echo=False, poolclass=NullPool)
 TestSyncSession = sessionmaker(test_sync_engine, class_=Session, expire_on_commit=False)
 
 
+def _ensure_worker_db_exists() -> None:
+    """If running under pytest-xdist, the per-worker DB may not exist yet.
+
+    Connect to the default 'postgres' DB and CREATE DATABASE if needed.
+    Sync, called once per worker before any async fixture runs.
+    """
+    worker = os.getenv("PYTEST_XDIST_WORKER", "")
+    if not worker or worker == "master":
+        return  # baseline DB (aihm_test) is created out-of-band
+
+    import re
+    from sqlalchemy import create_engine as _create_sync_engine
+
+    sync_url = TEST_DATABASE_URL.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+    head, _, target_db = sync_url.rpartition("/")
+    admin_url = f"{head}/postgres"
+
+    admin_engine = _create_sync_engine(admin_url, isolation_level="AUTOCOMMIT")
+    with admin_engine.connect() as conn:
+        existing = conn.execute(
+            text("SELECT 1 FROM pg_database WHERE datname = :n"), {"n": target_db}
+        ).scalar()
+        if not existing:
+            # CREATE DATABASE doesn't accept parameters → identifier must be safe.
+            safe = re.sub(r"[^A-Za-z0-9_]", "", target_db)
+            conn.execute(text(f"CREATE DATABASE {safe}"))
+    admin_engine.dispose()
+
+
 @pytest_asyncio.fixture(scope="session")
 async def _create_tables():
     """Create all tables once per test session. Skips only if PostgreSQL is unreachable."""
+    try:
+        _ensure_worker_db_exists()
+    except (ConnectionRefusedError, OSError) as e:
+        pytest.skip(f"PostgreSQL not available: {e}")
+    except Exception as e:
+        if "connect" in str(e).lower() or "refused" in str(e).lower():
+            pytest.skip(f"PostgreSQL not available: {e}")
+        raise
+
     try:
         async with test_engine.begin() as conn:
             await conn.run_sync(Base.metadata.drop_all)
