@@ -69,6 +69,17 @@ class Settings(BaseSettings):
     SENTRY_DSN: str = ""
     SENTRY_ENVIRONMENT: str = "development"
 
+    # Calendar OAuth (Phase 4.2)
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    MICROSOFT_CLIENT_ID: str = ""
+    MICROSOFT_CLIENT_SECRET: str = ""
+    OAUTH_REDIRECT_BASE_URL: str = "http://localhost:5173"  # frontend route handles callback
+    # Fernet key for at-rest encryption of OAuth tokens.
+    # Generate via: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    # Empty in dev → tokens stored in plaintext (NEVER do this in prod).
+    ENCRYPTION_KEY: str = ""
+
     # App
     FRONTEND_URL: str = "http://localhost:5173"  # Override via env var on prod
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "http://localhost:5176", "http://localhost:5177", "http://localhost:5178", "http://localhost:5179", "http://localhost:3000", "http://89.167.78.19:3000"]
