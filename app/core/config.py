@@ -80,6 +80,14 @@ class Settings(BaseSettings):
     # Empty in dev → tokens stored in plaintext (NEVER do this in prod).
     ENCRYPTION_KEY: str = ""
 
+    # DocuSign e-signature (Phase 4.6) — JWT grant flow
+    DOCUSIGN_INTEGRATION_KEY: str = ""
+    DOCUSIGN_USER_ID: str = ""
+    DOCUSIGN_ACCOUNT_ID: str = ""
+    DOCUSIGN_PRIVATE_KEY: str = ""
+    DOCUSIGN_AUTH_HOST: str = "account-d.docusign.com"  # demo; prod = account.docusign.com
+    DOCUSIGN_API_HOST: str = "demo.docusign.net"        # demo; prod = www.docusign.net
+
     # App
     FRONTEND_URL: str = "http://localhost:5173"  # Override via env var on prod
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "http://localhost:5176", "http://localhost:5177", "http://localhost:5178", "http://localhost:5179", "http://localhost:3000", "http://89.167.78.19:3000"]
