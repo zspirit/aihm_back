@@ -1,0 +1,83 @@
+name: CI Backend
+
+on:
+  push:
+    branches: [main, feature/*]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check app/ tests/
+      - run: ruff format --check app/ tests/
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: aihm
+          POSTGRES_PASSWORD: aihm
+          POSTGRES_DB: aihm_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TEST_DATABASE_URL: postgresql+asyncpg://aihm:aihm@localhost:5432/aihm_test
+      DATABASE_URL: postgresql+asyncpg://aihm:aihm@localhost:5432/aihm_test
+      REDIS_URL: redis://localhost:6379/0
+      SECRET_KEY: ci-test-secret-key-not-for-production
+      S3_ENDPOINT: http://localhost:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      ANTHROPIC_API_KEY: sk-test-fake-key
+      TWILIO_ACCOUNT_SID: AC_fake_sid
+      TWILIO_AUTH_TOKEN: fake_token
+      TWILIO_PHONE_NUMBER: "+15555555555"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dev]"
+
+      # Garde-fou alembic (Chantier 12): la chaîne doit avoir exactement
+      # une head, et `alembic upgrade head` doit tourner propre sur DB vide.
+      # Voir alembic/README.md pour les règles.
+      - name: Alembic — single head + upgrade on empty DB
+        run: |
+          set -euo pipefail
+          HEAD_COUNT=$(alembic heads 2>/dev/null | grep -c '(head)' || true)
+          if [ "$HEAD_COUNT" != "1" ]; then
+            echo "::error::Alembic a $HEAD_COUNT head(s), attendu 1."
+            echo "Lance 'alembic merge' pour réconcilier:"
+            alembic heads
+            exit 1
+          fi
+          alembic upgrade head
+          alembic current
+
+      - run: pytest tests/test_security.py -v
+      - run: pytest tests/ -v --ignore=tests/test_security.py -x
