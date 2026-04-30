@@ -1,0 +1,43 @@
+{% extends "email/base.html" %}
+{% block content %}
+<h2>Votre feedback</h2>
+<p>{{ greeting }}</p>
+
+<p>Suite a votre candidature pour le poste de <strong>{{ position_title }}</strong>,
+nous souhaitons vous partager un retour sur votre profil.</p>
+
+{% if strengths %}
+<div class="info-box">
+  <p><strong>Vos points forts</strong></p>
+  {% for s in strengths %}
+  <p>&#10004; <strong>{{ s.title }}</strong> — {{ s.detail }}</p>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if improvements %}
+<div class="info-box">
+  <p><strong>Pistes de progression</strong></p>
+  {% for imp in improvements %}
+  <p>&#10148; <strong>{{ imp.title }}</strong> — {{ imp.detail }}</p>
+  {% if imp.advice %}
+  <p style="margin-left: 16px; color: #4F46E5;"><em>Conseil : {{ imp.advice }}</em></p>
+  {% endif %}
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if general_advice %}
+<hr class="divider">
+<p><strong>Conseils generaux</strong></p>
+<p>{{ general_advice }}</p>
+{% endif %}
+
+{% if closing %}
+<p>{{ closing }}</p>
+{% endif %}
+
+<p style="color: #9CA3AF; font-size: 12px; margin-top: 20px;">
+  Ce feedback a ete genere par IA a titre informatif. Il ne constitue pas un engagement contractuel.
+</p>
+{% endblock %}

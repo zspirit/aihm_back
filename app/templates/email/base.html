@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  body { margin: 0; padding: 0; background: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+  .wrapper { max-width: 600px; margin: 0 auto; padding: 24px 16px; }
+  .card { background: #ffffff; border-radius: 12px; padding: 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  .header { text-align: center; margin-bottom: 24px; }
+  .logo { font-size: 20px; font-weight: 700; color: #4F46E5; letter-spacing: -0.5px; }
+  .logo span { opacity: 0.6; font-weight: 400; }
+  h2 { color: #111827; font-size: 20px; margin: 0 0 16px; }
+  p { color: #4B5563; font-size: 15px; line-height: 1.6; margin: 0 0 12px; }
+  .btn { display: inline-block; background: #4F46E5; color: #ffffff !important; padding: 12px 28px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 15px; margin: 8px 0 16px; }
+  .btn:hover { background: #4338CA; }
+  .info-box { background: #F3F4F6; border-radius: 8px; padding: 16px; margin: 16px 0; }
+  .info-box p { margin: 4px 0; font-size: 14px; }
+  .footer { text-align: center; margin-top: 24px; }
+  .footer p { color: #9CA3AF; font-size: 12px; }
+  .divider { border: none; border-top: 1px solid #E5E7EB; margin: 20px 0; }
+</style>
+</head>
+<body>
+<div class="wrapper">
+  <div class="card">
+    <div class="header">
+      <div class="logo">AIHM <span>| {{ tenant_name }}</span></div>
+    </div>
+    {% block content %}{% endblock %}
+  </div>
+  <div class="footer">
+    <p>{{ tenant_name }} utilise AIHM pour ses entretiens de recrutement.</p>
+    <p>Cet email a ete envoye automatiquement. Ne pas repondre.</p>
+  </div>
+</div>
+</body>
+</html>

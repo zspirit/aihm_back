@@ -1,0 +1,25 @@
+{% extends "email/base.html" %}
+{% block content %}
+<h2>Rapport d'evaluation disponible</h2>
+<p>Bonjour {{ user_name }},</p>
+<p>Le rapport d'evaluation pour le candidat <strong>{{ candidate_name }}</strong>
+au poste de <strong>{{ position_title }}</strong> est maintenant disponible.</p>
+
+<div class="info-box">
+  <p><strong>Candidat :</strong> {{ candidate_name }}</p>
+  <p><strong>Poste :</strong> {{ position_title }}</p>
+  {% if global_score is not none %}
+  <p><strong>Score global :</strong> {{ global_score }}/100</p>
+  {% endif %}
+</div>
+
+<p>Consultez le rapport complet pour decouvrir l'analyse detaillee de l'entretien.</p>
+<p style="text-align: center;">
+  <a href="{{ report_url }}" class="btn">Voir le rapport</a>
+</p>
+
+<hr class="divider">
+<p style="font-size: 13px; color: #6B7280;">
+  Ce rapport a ete genere automatiquement par AIHM a partir de l'entretien telephonique IA.
+</p>
+{% endblock %}
