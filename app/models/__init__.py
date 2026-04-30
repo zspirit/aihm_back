@@ -26,6 +26,7 @@ from app.models.scorecard import Scorecard
 from app.models.shortlist import Shortlist, ShortlistCandidate
 from app.models.skill import Skill
 from app.models.task import Task
+from app.models.psychometric import PsychometricAssessment
 
 __all__ = [
     "Tenant",
@@ -61,4 +62,5 @@ __all__ = [
     "ShortlistCandidate",
     "Skill",
     "Task",
+    "PsychometricAssessment",
 ]
