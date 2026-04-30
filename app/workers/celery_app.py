@@ -35,6 +35,7 @@ celery_app.autodiscover_tasks(
         "app.workers.matching",
         "app.workers.feedback",
         "app.workers.purge",
+        "app.workers.psychometrics_analysis",
     ]
 )
 

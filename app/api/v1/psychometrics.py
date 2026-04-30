@@ -96,10 +96,16 @@ async def submit_psychometric(
     await db.commit()
     await db.refresh(assessment)
 
-    # NOTE: a downstream worker should call psychometrics_analysis.delay(assessment.id)
-    # to populate traits_json + turnover_risk. Wired up where interview-complete
-    # side effects are owned. Not triggered here so the endpoint stays useful
-    # in setups that don't run the LLM tier (e.g. local dev).
+    # Kick off the Claude analysis. Fire-and-forget: if the worker tier
+    # isn't running (local dev, on-prem without an LLM), the row is still
+    # useful with the raw scores alone.
+    try:
+        from app.workers.psychometrics_analysis import analyze_psychometric
+        analyze_psychometric.delay(str(assessment.id))
+    except Exception:
+        # Broker unreachable → don't fail the user-facing request.
+        pass
+
     return assessment
 
 

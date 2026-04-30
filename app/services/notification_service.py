@@ -6,10 +6,47 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.notification import Notification
+from app.models.tenant import Tenant
 from app.models.user import User
 from app.services.notification_pubsub import publish_user_sync
+from app.services.slack import send_message_sync as slack_send
 
 logger = structlog.get_logger()
+
+# Notification types that should also fan-out to a tenant's Slack webhook
+# when configured. Keep this short — Slack is a coarse channel; only push
+# things a hiring team genuinely wants to see in real time.
+_SLACK_FORWARD_TYPES = {
+    "candidate.cv_analyzed",
+    "auto_flagged_for_review",
+    "interview_completed",
+    "offer.signed",
+}
+
+
+def _slack_text_for(notif: Notification) -> str:
+    """Render the one-line Slack message for a notification."""
+    title = notif.title or notif.type
+    if notif.message:
+        return f"*{title}* — {notif.message}"
+    return f"*{title}*"
+
+
+def _maybe_forward_to_slack(session: Session, notif: Notification) -> None:
+    """Look up the tenant's Slack webhook (if any) and forward.
+    Fire-and-forget: never raises."""
+    if notif.type not in _SLACK_FORWARD_TYPES:
+        return
+    try:
+        tenant = session.get(Tenant, notif.tenant_id)
+        if tenant is None:
+            return
+        url = (tenant.modules_config or {}).get("slack_webhook_url")
+        if not url:
+            return
+        slack_send(url, _slack_text_for(notif))
+    except Exception:
+        logger.warning("notif_slack_forward_failed", exc_info=True)
 
 
 def _payload_for_pubsub(notif: Notification) -> dict:
@@ -97,3 +134,14 @@ def create_notification(
     for n in created_notifs:
         if n.user_id:
             publish_user_sync(n.user_id, _payload_for_pubsub(n))
+
+    # Best-effort fan-out to the tenant's Slack webhook for whitelisted types.
+    # Forward ONCE per tenant+type even when we created N user-rows above —
+    # otherwise a 50-recruiter tenant gets 50 Slack pings per CV.
+    seen_tenants: set[tuple[UUID, str]] = set()
+    for n in created_notifs:
+        key = (n.tenant_id, n.type)
+        if key in seen_tenants:
+            continue
+        seen_tenants.add(key)
+        _maybe_forward_to_slack(session, n)
