@@ -133,6 +133,7 @@ from app.api.v1.integrations import router as integrations_router
 from app.api.v1.tasks import router as tasks_router
 from app.api.v1.analytics_advanced import router as analytics_advanced_router
 from app.api.v1.psychometrics import router as psychometrics_router
+from app.api.v1.sourcing import router as sourcing_router
 
 app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
 app.include_router(applications_router, prefix=settings.API_V1_PREFIX)
@@ -175,6 +176,7 @@ app.include_router(integrations_router, prefix=settings.API_V1_PREFIX)
 app.include_router(tasks_router, prefix=settings.API_V1_PREFIX)
 app.include_router(analytics_advanced_router, prefix=settings.API_V1_PREFIX)
 app.include_router(psychometrics_router, prefix=settings.API_V1_PREFIX)
+app.include_router(sourcing_router, prefix=settings.API_V1_PREFIX)
 
 
 # --- Health Check enrichi ---
