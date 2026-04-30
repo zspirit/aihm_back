@@ -25,6 +25,7 @@ from app.models.match_score import MatchScore, MatchSession
 from app.models.scorecard import Scorecard
 from app.models.shortlist import Shortlist, ShortlistCandidate
 from app.models.skill import Skill
+from app.models.task import Task
 
 __all__ = [
     "Tenant",
@@ -59,4 +60,5 @@ __all__ = [
     "Shortlist",
     "ShortlistCandidate",
     "Skill",
+    "Task",
 ]

@@ -130,6 +130,7 @@ from app.api.v1.ai_transparency import router as ai_transparency_router
 from app.api.v1.referrals import router as referrals_router, public_router as referrals_public_router
 from app.api.v1.calendar import router as calendar_router
 from app.api.v1.integrations import router as integrations_router
+from app.api.v1.tasks import router as tasks_router
 
 app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
 app.include_router(applications_router, prefix=settings.API_V1_PREFIX)
@@ -169,6 +170,7 @@ app.include_router(referrals_router, prefix=settings.API_V1_PREFIX)
 app.include_router(referrals_public_router, prefix=settings.API_V1_PREFIX)
 app.include_router(calendar_router, prefix=settings.API_V1_PREFIX)
 app.include_router(integrations_router, prefix=settings.API_V1_PREFIX)
+app.include_router(tasks_router, prefix=settings.API_V1_PREFIX)
 
 
 # --- Health Check enrichi ---
