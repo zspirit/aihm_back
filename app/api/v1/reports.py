@@ -92,10 +92,16 @@ async def list_reports(
     # Build response items
     items = []
     for row in rows:
-        # Extract global_score from Analysis.scores JSONB
+        # Extract global_score from Analysis.scores JSONB.
+        # Production rows use 'score_global' (matches seed_rich.py + worker
+        # output); 'global' was an early shape we still tolerate for safety.
         global_score = None
-        if row.scores is not None and "global" in row.scores:
-            global_score = float(row.scores["global"])
+        if row.scores is not None:
+            raw = row.scores.get("score_global")
+            if raw is None:
+                raw = row.scores.get("global")
+            if raw is not None:
+                global_score = float(raw)
 
         # Extract summary from Report.content JSONB and truncate to 200 chars
         summary = None

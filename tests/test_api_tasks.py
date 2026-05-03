@@ -146,6 +146,10 @@ async def test_list_filters_by_status(client, admin_data, db_session):
 
 
 async def test_list_filters_by_assignee_me(client, admin_data, db_session):
+    """assignee_id='me' returns:
+    - tasks explicitly assigned to me, AND
+    - unassigned tasks I created (otherwise self-created to-dos with no
+      explicit assignee would never appear in 'mine')."""
     headers, user, tenant = admin_data
     other = User(
         tenant_id=tenant.id, email="other@same.com",
@@ -154,14 +158,23 @@ async def test_list_filters_by_assignee_me(client, admin_data, db_session):
     db_session.add(other)
     await db_session.flush()
 
+    # Explicitly assigned to me — should appear.
     await _make_task(db_session, tenant_id=tenant.id, created_by=user.id,
                      assignee_id=user.id, title="for-me")
+    # Assigned to someone else — should NOT appear.
     await _make_task(db_session, tenant_id=tenant.id, created_by=user.id,
                      assignee_id=other.id, title="for-them")
+    # Created by me, unassigned — SHOULD appear (was the bug).
+    await _make_task(db_session, tenant_id=tenant.id, created_by=user.id,
+                     assignee_id=None, title="my-todo")
+    # Created by someone else, unassigned — should NOT appear.
+    await _make_task(db_session, tenant_id=tenant.id, created_by=other.id,
+                     assignee_id=None, title="their-todo")
     await db_session.commit()
 
     res = await client.get("/api/v1/tasks?assignee_id=me", headers=headers)
-    assert [t["title"] for t in res.json()] == ["for-me"]
+    titles = sorted(t["title"] for t in res.json())
+    assert titles == ["for-me", "my-todo"]
 
 
 async def test_list_filters_by_entity(client, admin_data, db_session):

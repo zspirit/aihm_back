@@ -19,7 +19,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import desc, select
+from sqlalchemy import desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -119,7 +119,16 @@ async def list_tasks(
         stmt = stmt.where(Task.status == status)
     if assignee_id:
         if assignee_id == "me":
-            stmt = stmt.where(Task.assignee_id == current_user.id)
+            # 'Me' = anything I'd want on my own to-do list:
+            #   - tasks explicitly assigned to me, OR
+            #   - tasks I created that are unassigned (default behaviour:
+            #     POST /tasks without assignee_id used to be invisible here).
+            stmt = stmt.where(
+                or_(
+                    Task.assignee_id == current_user.id,
+                    (Task.assignee_id.is_(None)) & (Task.created_by == current_user.id),
+                )
+            )
         else:
             try:
                 stmt = stmt.where(Task.assignee_id == UUID(assignee_id))
