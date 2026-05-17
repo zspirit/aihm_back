@@ -12,6 +12,9 @@ RUN groupadd -r aihm && useradd -r -g aihm -d /app -s /sbin/nologin aihm
 
 COPY --from=builder /install /usr/local
 WORKDIR /app
+# Make /app importable as a module root so alembic and `python -m app.*`
+# work via `docker exec` without callers needing to set PYTHONPATH manually.
+ENV PYTHONPATH=/app
 COPY . .
 RUN chown -R aihm:aihm /app
 
