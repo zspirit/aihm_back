@@ -1,7 +1,22 @@
 from typing import Optional
 from datetime import datetime
 from uuid import UUID
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, TypeAdapter, field_validator
+
+# Pydantic v2 requires TypeAdapter for ad-hoc validation; calling
+# `EmailStr.validate(v)` (v1 syntax) raises AttributeError and silently rejects
+# every email through the bare except below — caused 100% of enterprise
+# creations to 422. See design-review/TEST_REPORT.md finding B-1.
+_email_validator = TypeAdapter(EmailStr)
+
+
+def _validate_optional_email(v: Optional[str]) -> Optional[str]:
+    if v in (None, ""):
+        return None
+    try:
+        return _email_validator.validate_python(v)
+    except Exception as exc:
+        raise ValueError("Invalid email address") from exc
 
 
 class EnterpriseCreate(BaseModel):
@@ -16,13 +31,7 @@ class EnterpriseCreate(BaseModel):
     @field_validator('contact_email', mode='before')
     @classmethod
     def validate_email(cls, v):
-        if v == "" or v is None:
-            return None
-        try:
-            EmailStr.validate(v)
-        except:
-            raise ValueError("Invalid email address")
-        return v
+        return _validate_optional_email(v)
 
 
 class EnterpriseUpdate(BaseModel):
@@ -38,13 +47,7 @@ class EnterpriseUpdate(BaseModel):
     @field_validator('contact_email', mode='before')
     @classmethod
     def validate_email(cls, v):
-        if v == "" or v is None:
-            return None
-        try:
-            EmailStr.validate(v)
-        except:
-            raise ValueError("Invalid email address")
-        return v
+        return _validate_optional_email(v)
 
 
 class EnterpriseResponse(BaseModel):
