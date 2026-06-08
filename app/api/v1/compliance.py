@@ -228,3 +228,25 @@ async def export_dpia_markdown(
         media_type="text/markdown; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/compliance/bias-report.md")
+async def export_bias_report_markdown(
+    current_user: User = Depends(require_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """COMP-13 — quarterly bias monitoring report (Markdown).
+
+    Light-weight aggregator over `cv_score` in the past 90 days. Surfaces
+    cohort means + flagged Δs without inferring protected attributes.
+    """
+    from app.services.bias_monitoring import compute_bias_report, render_report_markdown
+
+    report = await compute_bias_report(db, tenant_id=current_user.tenant_id, days=90)
+    body = render_report_markdown(report)
+    filename = f"bias_report_{datetime.now(timezone.utc):%Y%m%d}.md"
+    return Response(
+        content=body,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
