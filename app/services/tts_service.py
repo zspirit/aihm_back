@@ -1,11 +1,8 @@
-import asyncio
-import io
-
-import edge_tts
 import structlog
 
 from app.core.config import get_settings
 from app.services.storage import ensure_bucket, s3_client
+from app.services.tts import synthesize as _synthesize_via_adapter
 
 logger = structlog.get_logger()
 
@@ -14,34 +11,36 @@ TTS_BUCKET = "tts-audio"
 
 async def generate_tts_mp3(
     text: str,
-    voice: str = "fr-FR-HenriNeural",
+    voice: str | None = None,
     rate: str = "-5%",
 ) -> bytes:
-    """
-    Generate MP3 bytes from text using edge-tts (Microsoft Neural TTS).
-    Returns raw MP3 bytes in memory.
+    """Generate MP3 bytes from text.
+
+    Delegates to the configured TTS provider via `app.services.tts` (selected
+    by `settings.TTS_PROVIDER`). The `voice` argument, if provided, is passed
+    through to the provider; if omitted, the provider's default voice is used
+    (configured per provider in `DEFAULT_VOICE_BY_PROVIDER`).
+
+    Kept as a thin wrapper for backwards compatibility with existing callers
+    that pass `voice="fr-FR-HenriNeural"` (edge-tts voice id). When
+    `TTS_PROVIDER=openai|elevenlabs`, the legacy voice id is ignored and the
+    provider default is used unless `voice` matches the new provider's format.
 
     Args:
-        text: Text to synthesize
-        voice: Edge-TTS voice code (e.g., "fr-FR-HenriNeural", "fr-FR-DeniseNeural")
-        rate: Speech rate modifier (e.g., "-5%" for slower, "+10%" for faster)
+        text: Text to synthesize (FR).
+        voice: Optional provider-specific voice id. None → default.
+        rate: Speech rate ("-5%" slower, "+10%" faster). Provider-dependent.
 
     Returns:
-        MP3 bytes ready to be saved or uploaded
+        MP3 bytes ready to be saved or uploaded.
     """
-    communicate = edge_tts.Communicate(text, voice, rate=rate)
-    mp3_buffer = io.BytesIO()
+    # When voice is the legacy edge-tts default and provider is not "edge",
+    # ignore it (otherwise OpenAI/ElevenLabs would receive a meaningless id).
+    settings = get_settings()
+    if voice == "fr-FR-HenriNeural" and getattr(settings, "TTS_PROVIDER", "edge") != "edge":
+        voice = None
 
-    try:
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                mp3_buffer.write(chunk["data"])
-    except Exception as e:
-        logger.error("edge_tts_generation_error", text_length=len(text), voice=voice, error=str(e))
-        raise
-
-    mp3_buffer.seek(0)
-    return mp3_buffer.read()
+    return await _synthesize_via_adapter(text=text, voice=voice, rate=rate)
 
 
 def generate_presigned_url_from_key(key: str) -> str:

@@ -52,10 +52,18 @@ class Settings(BaseSettings):
     WHISPER_COMPUTE_TYPE: str = "int8"
 
     # TTS (Conversation)
-    TTS_VOICE: str = "fr-FR-HenriNeural"
+    # `TTS_PROVIDER` sélectionne le backend : "edge" (default, gratuit),
+    # "openai" (nova FR, requires OPENAI_API_KEY), "elevenlabs"
+    # (requires ELEVENLABS_API_KEY). Voir app/services/tts.py.
+    TTS_PROVIDER: str = "edge"
+    TTS_VOICE: str = "fr-FR-HenriNeural"  # default voice for "edge" provider
     TTS_BUCKET: str = "tts-audio"
     TTS_PRESIGNED_URL_EXPIRY: int = 7200
     TTS_RATE: str = "-5%"
+
+    # API keys for paid TTS providers (optional — only set when used)
+    OPENAI_API_KEY: str = ""
+    ELEVENLABS_API_KEY: str = ""
 
     # Safety Classifier (Conversation)
     SAFETY_MODEL: str = "claude-haiku-4-5-20251001"
