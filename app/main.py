@@ -128,6 +128,7 @@ from app.api.v1.sequences import router as sequences_router
 from app.api.v1.public_careers import router as public_careers_router
 from app.api.v1.ai_transparency import router as ai_transparency_router
 from app.api.v1.ai_transparency_public import router as ai_transparency_public_router
+from app.api.v1.compliance import router as compliance_router
 from app.api.v1.referrals import router as referrals_router, public_router as referrals_public_router
 from app.api.v1.calendar import router as calendar_router
 from app.api.v1.integrations import router as integrations_router
@@ -171,6 +172,7 @@ app.include_router(sequences_router, prefix=settings.API_V1_PREFIX)
 app.include_router(public_careers_router, prefix=settings.API_V1_PREFIX)
 app.include_router(ai_transparency_router, prefix=settings.API_V1_PREFIX)
 app.include_router(ai_transparency_public_router, prefix=settings.API_V1_PREFIX)
+app.include_router(compliance_router, prefix=settings.API_V1_PREFIX)
 app.include_router(referrals_router, prefix=settings.API_V1_PREFIX)
 app.include_router(referrals_public_router, prefix=settings.API_V1_PREFIX)
 app.include_router(calendar_router, prefix=settings.API_V1_PREFIX)
