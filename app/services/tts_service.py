@@ -217,6 +217,28 @@ async def pre_generate_interview_audio(
         )
         logger.info("confirm_reask_audio_generated", interview_id=interview_id, question_idx=i)
 
+    # --- Backchannel clips (VOICE-08) ---
+    # Interjections courtes jouées avant la prochaine question pour humaniser
+    # la transition (masque légèrement le webhook round-trip). On en pré-génère
+    # plusieurs pour pouvoir alterner aléatoirement.
+    backchannel_phrases = [
+        "D'accord.",
+        "Bien.",
+        "Très bien.",
+        "Hmm hmm.",
+        "Je note.",
+    ]
+    for i, phrase in enumerate(backchannel_phrases):
+        bc_mp3 = await generate_tts_mp3(phrase, voice, settings.TTS_RATE)
+        urls[f"backchannel_{i}"] = upload_tts_to_minio(
+            bc_mp3, str(interview_id), f"backchannel_{i}"
+        )
+    logger.info(
+        "backchannel_audios_generated",
+        interview_id=interview_id,
+        count=len(backchannel_phrases),
+    )
+
     # --- Outro ---
     # Note Art. 50 : on rappelle qu'il s'agissait d'une IA (déjà annoncé en
     # intro mais utile en clôture pour ancrer la transparence dans l'expérience).

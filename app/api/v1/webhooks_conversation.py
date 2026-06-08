@@ -96,6 +96,30 @@ def _tts_url(tts_urls: Optional[dict], key: str) -> Optional[str]:
     return tts_urls.get(key)
 
 
+def _pick_backchannel(tts_urls: Optional[dict], question_idx: int) -> str:
+    """Return a TwiML fragment for a short backchannel interjection (VOICE-08).
+
+    Uses `question_idx` deterministically to alternate between the pre-generated
+    clips — keeps the rotation simple, predictable for testing, and avoids
+    consecutive identical clips. Returns empty string if no backchannel was
+    pre-generated (legacy interview).
+
+    Played before the next question/transition in TwiML to humanize the
+    handover and lightly mask webhook round-trip latency.
+    """
+    if not tts_urls:
+        return ""
+    # Convention: backchannel_0..backchannel_4 stored by pre_generate_interview_audio
+    candidates = [
+        tts_urls.get(f"backchannel_{i}") for i in range(5)
+    ]
+    candidates = [u for u in candidates if u]
+    if not candidates:
+        return ""
+    url = candidates[question_idx % len(candidates)]
+    return f"<Play>{_escape_xml(url)}</Play>"
+
+
 @router.post("/voice")
 async def conversation_voice_handler(
     request: Request,
@@ -168,7 +192,7 @@ async def conversation_voice_handler(
     twiml = (
         "<Response>"
         f"  {intro_fragment}"
-        f'  <Gather input="speech" timeout="{timeout + 3}" speechTimeout="auto" '
+        f'  <Gather input="speech" timeout="{timeout}" speechTimeout="2" actionOnEmptyResult="true" '
         f'language="fr-FR" '
         f'action="/api/v1/webhooks/conv/answer?interview_id={interview_id}&amp;question_idx=0&amp;retry_count=0" '
         f'method="POST">'
@@ -316,7 +340,7 @@ async def conversation_answer_handler(
         )
         twiml = (
             "<Response>"
-            f'  <Gather input="speech" timeout="{timeout + 3}" speechTimeout="auto" '
+            f'  <Gather input="speech" timeout="{timeout}" speechTimeout="2" actionOnEmptyResult="true" '
             f'language="fr-FR" '
             f'action="/api/v1/webhooks/conv/answer?interview_id={interview_id}&amp;question_idx={question_idx}&amp;retry_count={retry_count + 1}" '
             f'method="POST">'
@@ -343,7 +367,7 @@ async def conversation_answer_handler(
 
         twiml = (
             "<Response>"
-            f'  <Gather input="speech" timeout="{timeout + 3}" speechTimeout="auto" '
+            f'  <Gather input="speech" timeout="{timeout}" speechTimeout="2" actionOnEmptyResult="true" '
             f'language="fr-FR" '
             f'action="/api/v1/webhooks/conv/answer?interview_id={interview_id}&amp;question_idx={question_idx}&amp;retry_count={retry_count + 1}" '
             f'method="POST">'
@@ -411,7 +435,7 @@ async def conversation_answer_handler(
         twiml = (
             "<Response>"
             f"  {redirect_fragment}"
-            f'  <Gather input="speech" timeout="{timeout + 3}" speechTimeout="auto" '
+            f'  <Gather input="speech" timeout="{timeout}" speechTimeout="2" actionOnEmptyResult="true" '
             f'language="fr-FR" '
             f'action="/api/v1/webhooks/conv/answer?interview_id={interview_id}&amp;question_idx={next_idx}&amp;retry_count=0" '
             f'method="POST">'
@@ -445,9 +469,14 @@ async def conversation_answer_handler(
     next_full = f"{_trans} {next_text}"
     next_fragment = _say_or_play(next_full, _tts_url(tts_urls, f"q{next_idx}"))
 
+    # VOICE-08 backchannel — petit "d'accord/bien/hmm" avant la transition,
+    # humanise l'enchaînement. Vide pour les interviews legacy sans pre-gen.
+    backchannel = _pick_backchannel(tts_urls, question_idx)
+
     twiml = (
         "<Response>"
-        f'  <Gather input="speech" timeout="{timeout + 3}" speechTimeout="auto" '
+        f"  {backchannel}"
+        f'  <Gather input="speech" timeout="{timeout}" speechTimeout="2" actionOnEmptyResult="true" '
         f'language="fr-FR" '
         f'action="/api/v1/webhooks/conv/answer?interview_id={interview_id}&amp;question_idx={next_idx}&amp;retry_count=0" '
         f'method="POST">'

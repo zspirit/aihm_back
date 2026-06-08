@@ -91,6 +91,29 @@ async def classify_answer(
     """
     settings = get_settings()
 
+    # VOICE-09 — short-circuit conversational repair before Claude call.
+    # Saves ~$0.00025 + ~0.5-1s latency per obvious case (empty, very short,
+    # or low-confidence transcript). The downstream `decide_action` will
+    # route EMPTY to retry as configured.
+    cleaned = (speech_result or "").strip()
+    if not cleaned or len(cleaned) < 5:
+        logger.info(
+            "classify_answer_short_circuit_empty",
+            question_id=question_id,
+            text_len=len(cleaned),
+            twilio_confidence=confidence,
+        )
+        return SafetyResult(SafetyLabel.EMPTY, 0.95, "short_circuit_empty_or_too_short")
+
+    if confidence < 0.3:
+        logger.info(
+            "classify_answer_short_circuit_low_confidence",
+            question_id=question_id,
+            text_len=len(cleaned),
+            twilio_confidence=confidence,
+        )
+        return SafetyResult(SafetyLabel.EMPTY, 0.85, "short_circuit_low_twilio_confidence")
+
     # Build the user message with clear untrusted markers
     user_message = (
         f"QUESTION ASKED (reference only): {question_text}\n\n"
