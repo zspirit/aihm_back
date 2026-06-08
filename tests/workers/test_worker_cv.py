@@ -171,16 +171,26 @@ def test_process_cv_bulk_import():
     mu.assert_called_once_with(sess, bid, True)
 
 def test_auto_reject_flags_for_review():
+    """COMP-01 — flagged_for_review status + 'IA recommande rejet' notification
+    + downstream cv_analyzed notification (2 calls total since the human
+    review gate was added)."""
     pid = str(uuid.uuid4()); c = _make_cand(pos_id=pid); p = _make_pos(pid=uuid.UUID(pid), reject=50); t = _make_tenant()
     sess = _mock_session(c, p, t)
     with patch("app.services.notification_service.create_notification") as mock_notif:
         _run_process_cv(str(c.id), sess, score_result={"score": 20, "explanation": {}}, position_id=pid)
     assert c.pipeline_status == "flagged_for_review"
-    mock_notif.assert_called_once()
-    call_kwargs = mock_notif.call_args.kwargs
-    assert call_kwargs["type"] == "auto_flagged_for_review"
-    assert "20" in call_kwargs["message"]
-    assert "50" in call_kwargs["message"]
+    # Find the auto_flagged_for_review notification among the calls — its
+    # exact relative ordering vs cv_analyzed shouldn't be load-bearing.
+    flagged_calls = [
+        call for call in mock_notif.call_args_list
+        if call.kwargs.get("type") == "auto_flagged_for_review"
+    ]
+    assert len(flagged_calls) == 1
+    msg = flagged_calls[0].kwargs["message"]
+    assert "20" in msg and "50" in msg
+    # The notification + audit log now make it explicit that this is a
+    # recommendation pending human review, not an auto-reject.
+    assert flagged_calls[0].kwargs["data"].get("ai_recommendation") == "reject"
 
 def test_auto_advance():
     pid = str(uuid.uuid4()); c = _make_cand(pos_id=pid); p = _make_pos(pid=uuid.UUID(pid), advance=75); t = _make_tenant()
