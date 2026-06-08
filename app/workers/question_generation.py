@@ -95,53 +95,76 @@ def generate_interview_questions(candidate, position) -> list[dict]:
             f"doivent avoir au moins 1 question dediee chacune."
         )
 
+    # System prompt: persona Léa, ton conversationnel, conformité EU AI Act.
+    # Séparé du user message pour que Claude internalise la persona avant
+    # d'analyser les données du candidat. Le ton vise un naturel chaleureux
+    # qui réduit le perçu "robot" tout en restant pro et neutre.
+    system_prompt = """Tu es Léa, recruteuse IA qui mène un entretien téléphonique pré-qualification.
+
+PERSONA & TON :
+- Chaleureuse, professionnelle, à l'écoute. Ton humain et bienveillant.
+- Tu poses des questions ouvertes, pas des interrogatoires.
+- Tu reformules avec tes propres mots, jamais en mode "questionnaire à puces".
+- Tu utilises des transitions naturelles entre les sujets ("D'accord, parlons maintenant de…", "Intéressant, on enchaîne sur…", "Très bien, dernière question").
+
+CONFORMITÉ EU AI ACT (Art. 50 — transparence) :
+- Le candidat sait déjà qu'il parle à une IA (annoncé en intro de l'appel).
+- Tes questions ne doivent JAMAIS prétendre être humaines ou émotionnellement empathiques au-delà du raisonnable. Évite "je comprends ce que vous ressentez", "ça doit être difficile". Reste analytique mais chaleureuse.
+
+QUALITÉ DES QUESTIONS :
+- Phrases courtes (<25 mots si possible), faciles à comprendre à l'oral.
+- Une seule question à la fois — pas de "et aussi… et puis…".
+- Concrètes : demande des exemples, des projets, des situations vécues, pas des opinions générales.
+- Adaptées au niveau du poste et au profil du candidat (regarde son CV).
+
+INTERDITS LÉGAUX :
+- AUCUNE question sur la personnalité, les émotions intimes, les attributs personnels.
+- AUCUNE question discriminatoire (âge, famille, religion, origine, santé, orientation, etc.).
+- Reste strictement sur les compétences, l'expérience, et les soft skills professionnels.
+
+FORMAT DE SORTIE :
+Tu retournes EXACTEMENT un JSON array, sans commentaire avant/après, structuré comme indiqué."""
+
+    user_message = f"""Génère des questions d'entretien téléphonique pour ce candidat.
+L'entretien dure 5 minutes max, donc exactement 3 questions.
+
+FICHE DE POSTE :
+- Titre : {position.title}
+- Description : {position.description[:800]}
+- Niveau : {position.seniority_level}
+
+Compétences requises (par priorité) :
+{skills_formatted}
+
+CV DU CANDIDAT :
+{json.dumps(cv_data, ensure_ascii=False)[:1500]}
+
+QUESTIONS OBLIGATOIRES DU RECRUTEUR :
+{json.dumps(custom_questions)}
+
+CONSIGNES SUPPLÉMENTAIRES :
+- Mix recommandé : 2 questions techniques, 1 expérience/soft skills.
+- Pour chaque question, indique la compétence ciblée dans `target_skill`.
+- Formulation : pense "conversation entre deux pros au téléphone", pas "questionnaire d'évaluation".{critical_instruction}
+
+Format JSON (rien d'autre dans ta réponse) :
+[
+    {{
+        "id": 1,
+        "text": "la question, formulée naturellement, comme tu la dirais à l'oral",
+        "category": "technique|experience|soft_skills",
+        "target_skill": "nom de la competence ciblee",
+        "expected_duration_seconds": 45,
+        "evaluation_criteria": "ce que tu cherches à évaluer dans la réponse"
+    }}
+]"""
+
     response = client.messages.create(
         model=settings.ANTHROPIC_MODEL,
         max_tokens=1500,
         timeout=60.0,
-        messages=[
-            {
-                "role": "user",
-                "content": f"""Genere des questions d'entretien telephonique pour ce candidat.
-L'entretien dure 5 minutes max, donc exactement 3 questions.
-
-FICHE DE POSTE:
-- Titre: {position.title}
-- Description: {position.description[:800]}
-- Niveau: {position.seniority_level}
-
-Competences requises (par priorite):
-{skills_formatted}
-
-CV DU CANDIDAT:
-{json.dumps(cv_data, ensure_ascii=False)[:1500]}
-
-QUESTIONS OBLIGATOIRES DU RECRUTEUR:
-{json.dumps(custom_questions)}
-
-REGLES:
-- Questions ouvertes, pas de oui/non
-- Adapte la difficulte au niveau du poste ({position.seniority_level})
-- Mix: technique (2-3), experience (1-2), soft skills (1)
-- Formulation naturelle en francais, pour conversation telephonique
-- PAS de questions sur la personnalite, les emotions, ou les attributs personnels
-- PAS de questions discriminatoires (age, famille, religion, etc.)
-- Genere des questions qui evaluent chaque competence listee
-- Pour chaque question, indique la competence ciblee dans le champ "target_skill"{critical_instruction}
-
-Format JSON:
-[
-    {{
-        "id": 1,
-        "text": "la question en francais",
-        "category": "technique|experience|soft_skills",
-        "target_skill": "nom de la competence ciblee",
-        "expected_duration_seconds": 45,
-        "evaluation_criteria": "ce qu'on cherche dans la reponse"
-    }}
-]""",
-            }
-        ],
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_message}],
     )
 
     try:

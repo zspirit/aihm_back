@@ -143,31 +143,47 @@ async def pre_generate_interview_audio(
     )
 
     # --- Intro ---
+    # Persona Léa + transparence IA (EU AI Act Art. 50 : annoncer qu'il s'agit
+    # d'une IA, pas d'un humain). Ton chaleureux mais clair sur la nature du
+    # système. Ne JAMAIS prétendre être humaine.
     intro_text = (
-        f"Bonjour {candidate_name}. Je suis l'assistant de recrutement de l'entreprise. "
-        "Merci d'avoir accepté cet entretien téléphonique. "
-        "Cet appel est enregistré avec votre consentement. "
-        "Je vais vous poser quelques questions. Prenez le temps de répondre complètement. "
-        "Vous pouvez interrompre ma question si vous souhaitez répondre. Commençons."
+        f"Bonjour {candidate_name}, je suis Léa, l'assistante IA de recrutement. "
+        "Cet entretien est conduit par une intelligence artificielle, "
+        "et il est enregistré avec votre consentement. "
+        "Je vais vous poser trois questions courtes. "
+        "Prenez le temps de répondre, et si une question n'est pas claire, dites-le moi. "
+        "On commence."
     )
     intro_mp3 = await generate_tts_mp3(intro_text, voice, settings.TTS_RATE)
     urls["intro"] = upload_tts_to_minio(intro_mp3, str(interview_id), "intro")
     logger.info("intro_audio_generated", interview_id=interview_id)
 
     # --- Questions + Retries ---
+    # Transitions naturelles entre questions (vs "Question 1. ..." scripté).
+    # La question elle-même est générée par Claude question_generation worker
+    # avec persona Léa (formulation conversationnelle).
+    transitions = [
+        "Première question.",         # q0 : ouverture douce
+        "Deuxième question.",          # q1 : continuité
+        "Et voici la dernière.",       # q2 : signal de fin proche
+        "On enchaîne.",                # q3+ : fallback si > 3 questions
+        "Question suivante.",
+        "Continuons.",
+    ]
     for i, q in enumerate(questions):
         question_text = q.get("text", str(q))
-        question_number_text = f"Question {i + 1}. {question_text}"
+        transition = transitions[min(i, len(transitions) - 1)]
+        full_text = f"{transition} {question_text}"
 
         # Main question
-        q_mp3 = await generate_tts_mp3(question_number_text, voice, settings.TTS_RATE)
+        q_mp3 = await generate_tts_mp3(full_text, voice, settings.TTS_RATE)
         urls[f"q{i}"] = upload_tts_to_minio(q_mp3, str(interview_id), f"q{i}")
         logger.info("question_audio_generated", interview_id=interview_id, question_idx=i)
 
-        # Retry prompt for this question
+        # Retry prompt for this question — ton plus doux, pas accusateur
         retry_text = (
-            f"Je n'ai pas bien entendu votre réponse. "
-            f"Pourriez-vous répéter ? {question_text}"
+            f"Je n'ai pas tout à fait saisi. Pouvez-vous reformuler ou répéter ? "
+            f"La question portait sur : {question_text}"
         )
         retry_mp3 = await generate_tts_mp3(retry_text, voice, settings.TTS_RATE)
         urls[f"retry_q{i}"] = upload_tts_to_minio(retry_mp3, str(interview_id), f"retry_q{i}")
@@ -175,8 +191,8 @@ async def pre_generate_interview_audio(
 
     # --- Off-scope redirect (generic, reused) ---
     redirect_text = (
-        "Je suis désolé, je ne peux pas répondre à cette question. "
-        "Revenons à l'entretien."
+        "Je préfère rester sur les questions de l'entretien. "
+        "Revenons-y."
     )
     redirect_mp3 = await generate_tts_mp3(redirect_text, voice, settings.TTS_RATE)
     urls["off_scope_redirect"] = upload_tts_to_minio(
@@ -184,10 +200,30 @@ async def pre_generate_interview_audio(
     )
     logger.info("off_scope_redirect_audio_generated", interview_id=interview_id)
 
+    # --- Confirm-reask (per question, when answer is off_scope) ---
+    # Reused across all questions because the wording is generic. We append
+    # the question text dynamically via TTS at runtime would defeat pre-gen,
+    # so we play this generic prompt followed by the next question audio.
+    for i, q in enumerate(questions):
+        question_text = q.get("text", str(q))
+        confirm_text = (
+            "Je veux m'assurer d'avoir bien compris : "
+            "souhaitez-vous vraiment donner cette réponse, "
+            f"ou préférez-vous reprendre la question ? Elle portait sur : {question_text}"
+        )
+        confirm_mp3 = await generate_tts_mp3(confirm_text, voice, settings.TTS_RATE)
+        urls[f"confirm_reask_q{i}"] = upload_tts_to_minio(
+            confirm_mp3, str(interview_id), f"confirm_reask_q{i}"
+        )
+        logger.info("confirm_reask_audio_generated", interview_id=interview_id, question_idx=i)
+
     # --- Outro ---
+    # Note Art. 50 : on rappelle qu'il s'agissait d'une IA (déjà annoncé en
+    # intro mais utile en clôture pour ancrer la transparence dans l'expérience).
     outro_text = (
-        "Merci beaucoup pour vos réponses. L'entretien est maintenant terminé. "
-        "Vous recevrez un retour dans les prochains jours. Bonne journée."
+        "Voilà, c'est tout pour moi. Merci d'avoir pris le temps de répondre. "
+        "Cet entretien IA va être analysé, et un recruteur humain vous recontactera "
+        "dans les prochains jours avec un retour. Bonne journée."
     )
     outro_mp3 = await generate_tts_mp3(outro_text, voice, settings.TTS_RATE)
     urls["outro"] = upload_tts_to_minio(outro_mp3, str(interview_id), "outro")
