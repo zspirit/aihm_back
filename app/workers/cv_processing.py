@@ -152,6 +152,7 @@ def process_cv(
                 model_version="2026-04",
                 confidence_score=(candidate.cv_score / 100.0) if candidate.cv_score else None,
                 summary=f"Score CV vs poste {position.title}: {candidate.cv_score}/100",
+                prompt_hash=score_result.get("_prompt_hash"),
                 extra={
                     "position_id": str(position.id),
                     "weights": scoring_weights,
@@ -473,14 +474,10 @@ def score_cv(parsed_data: dict, position, weights: dict | None = None) -> dict:
     ew = (weights or {}).get("experience", 30)
     edw = (weights or {}).get("education", 20)
 
-    response = client.messages.create(
-        model=settings.ANTHROPIC_MODEL,
-        max_tokens=2000,
-        timeout=60.0,
-        messages=[
-            {
-                "role": "user",
-                "content": f"""Evalue ce CV par rapport a cette fiche de poste. Reponds UNIQUEMENT en JSON.
+    # COMP-02 — build prompt as a string so the caller can hash it for the
+    # audit trail (Art. 12 automated logs). Keep it identical to what is
+    # sent in `messages` below.
+    prompt_text = f"""Evalue ce CV par rapport a cette fiche de poste. Reponds UNIQUEMENT en JSON.
 
 FICHE DE POSTE:
 - Titre: {position.title}
@@ -526,9 +523,16 @@ Format JSON:
         "experience_match": {{"score": 70, "justification": "..."}},
         "education_match": {{"score": 75, "justification": "..."}}
     }}
-}}""",
-            }
-        ],
+}}"""
+
+    from app.services.audit import compute_prompt_hash
+    prompt_hash = compute_prompt_hash(prompt_text)
+
+    response = client.messages.create(
+        model=settings.ANTHROPIC_MODEL,
+        max_tokens=2000,
+        timeout=60.0,
+        messages=[{"role": "user", "content": prompt_text}],
     )
 
     try:
@@ -537,11 +541,13 @@ Format JSON:
             text_content = text_content.split("```json")[1].split("```")[0]
         elif "```" in text_content:
             text_content = text_content.split("```")[1].split("```")[0]
-        return json.loads(text_content.strip())
+        result = json.loads(text_content.strip())
+        result["_prompt_hash"] = prompt_hash
+        return result
     except (json.JSONDecodeError, IndexError) as e:
         raw = response.content[0].text if response.content else "empty"
         logger.error("cv_scoring_json_error", error=str(e), raw_response=raw[:500], stop_reason=response.stop_reason)
-        return {"score": 0, "explanation": {"error": f"Scoring failed: {e}"}}
+        return {"score": 0, "explanation": {"error": f"Scoring failed: {e}"}, "_prompt_hash": prompt_hash}
 
 
 def score_cv_quality(parsed_data: dict) -> dict:
