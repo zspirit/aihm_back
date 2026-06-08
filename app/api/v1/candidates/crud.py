@@ -1092,7 +1092,26 @@ async def bulk_action(
                 success_count += 1
 
             elif body.action == "reject":
+                # COMP-01 — explicit human reject. Audit-log with the human
+                # actor so the candidate's right-to-explanation timeline
+                # clearly shows the final decision came from a recruiter, not
+                # the IA. The IA's prior "cv_reject_recommended" entry (logged
+                # at scoring time) stays untouched as evidence of the chain.
+                previous_status = candidate.pipeline_status
                 candidate.pipeline_status = "rejected"
+                await log_action(
+                    db,
+                    tenant_id=current_user.tenant_id,
+                    user_id=current_user.id,
+                    action="candidate_rejected",
+                    entity_type="candidate",
+                    entity_id=str(candidate.id),
+                    details={
+                        "actor": "human",
+                        "previous_pipeline_status": previous_status,
+                        "via": "bulk_action",
+                    },
+                )
                 results.append(
                     BulkActionResult(
                         candidate_id=candidate_id_str,

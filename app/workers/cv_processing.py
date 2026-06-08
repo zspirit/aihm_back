@@ -167,17 +167,42 @@ def process_cv(
         cv_score = candidate.cv_score
         if position:
             if position.auto_reject_threshold is not None and cv_score is not None and cv_score < position.auto_reject_threshold:
+                # COMP-01 — IA never rejects directly. The candidate is flagged
+                # for HUMAN review and the IA recommendation is audit-logged
+                # (Art. 14 human oversight + Art. 12 logs). The recruiter must
+                # confirm rejection from the UI; only then does pipeline_status
+                # become 'rejected' (via the bulk-reject endpoint).
                 candidate.pipeline_status = "flagged_for_review"
-                logger.info("auto_flagged_for_review", candidate_id=candidate_id, score=cv_score, threshold=position.auto_reject_threshold)
+                logger.info("ai_recommended_reject_pending_human_review", candidate_id=candidate_id, score=cv_score, threshold=position.auto_reject_threshold)
+                log_ai_action_sync(
+                    session,
+                    tenant_id=candidate.tenant_id,
+                    action="cv_reject_recommended",
+                    entity_type="candidate",
+                    entity_id=str(candidate.id),
+                    model="claude-sonnet-4-5",
+                    model_version="2026-04",
+                    confidence_score=(cv_score / 100.0) if cv_score else None,
+                    summary=(
+                        f"Score CV {cv_score}/100 sous le seuil {position.auto_reject_threshold}. "
+                        "Recommandation : rejeter. Décision finale réservée à un recruteur humain."
+                    ),
+                    extra={
+                        "position_id": str(position.id),
+                        "cv_score": cv_score,
+                        "auto_reject_threshold": position.auto_reject_threshold,
+                        "decision_status": "pending_human_review",
+                    },
+                )
                 from app.services.notification_service import create_notification
                 create_notification(
                     session=session,
                     tenant_id=candidate.tenant_id,
                     user_id=None,
                     type="auto_flagged_for_review",
-                    title="Candidat signale pour revue",
-                    message=f"Le candidat {candidate.name} a obtenu un score de {cv_score}/100 (seuil de rejet: {position.auto_reject_threshold}). Revue manuelle requise.",
-                    data={"candidate_id": str(candidate.id), "score": cv_score, "threshold": position.auto_reject_threshold},
+                    title="IA recommande rejet — revue humaine requise",
+                    message=f"Score IA {cv_score}/100 (seuil rejet : {position.auto_reject_threshold}) pour {candidate.name}. Vérifiez avant toute décision.",
+                    data={"candidate_id": str(candidate.id), "score": cv_score, "threshold": position.auto_reject_threshold, "ai_recommendation": "reject"},
                 )
             elif position.auto_advance_threshold is not None and cv_score is not None and cv_score >= position.auto_advance_threshold:
                 candidate.pipeline_status = "invited"
