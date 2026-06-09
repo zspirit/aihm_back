@@ -48,7 +48,7 @@ AIHM is a multi-tenant SaaS that assists HR teams with:
                                                             |--queue--> Celery worker
                                                             |--object-> MinIO
                                                             |--LLM-->   Anthropic API
-                                                            |--TTS-->   edge-tts (default) / OpenAI / ElevenLabs
+                                                            |--TTS-->   edge-tts (default) / OpenAI nova (optional)
                                                             |--voice--> Twilio (PSTN)
                                                             |--mail-->  Resend
 ```

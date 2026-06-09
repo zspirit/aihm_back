@@ -23,7 +23,7 @@ async def generate_tts_mp3(
 
     Kept as a thin wrapper for backwards compatibility with existing callers
     that pass `voice="fr-FR-HenriNeural"` (edge-tts voice id). When
-    `TTS_PROVIDER=openai|elevenlabs`, the legacy voice id is ignored and the
+    `TTS_PROVIDER=openai`, the legacy voice id is ignored and the
     provider default is used unless `voice` matches the new provider's format.
 
     Args:
@@ -35,7 +35,7 @@ async def generate_tts_mp3(
         MP3 bytes ready to be saved or uploaded.
     """
     # When voice is the legacy edge-tts default and provider is not "edge",
-    # ignore it (otherwise OpenAI/ElevenLabs would receive a meaningless id).
+    # ignore it (otherwise OpenAI would receive a meaningless id).
     settings = get_settings()
     if voice == "fr-FR-HenriNeural" and getattr(settings, "TTS_PROVIDER", "edge") != "edge":
         voice = None

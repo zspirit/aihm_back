@@ -99,8 +99,8 @@ DPO appointment will be triggered when AIHM passes either threshold:
 
 ## 8. Sub-processors & supply chain
 
-- Anthropic, OpenAI (optional), ElevenLabs (optional), Twilio, Resend,
-  Hetzner, Cloudflare (CDN). See DPIA §1.4.
+- Anthropic, OpenAI (optional), Deepgram (optional for STT streaming),
+  Twilio, Resend, Hetzner, Cloudflare (CDN). See DPIA §1.4.
 - Each sub-processor change requires a written impact assessment and an
   update of the sub-processor list in the DPIA template.
 

@@ -129,7 +129,7 @@ with an owner and a deadline.
 - **Mitigation**:
   - Model name centralised in `settings.ANTHROPIC_MODEL`
   - Prompts compatible with neighbouring Claude versions
-  - `tts.py` already abstracts TTS provider (edge / openai / elevenlabs)
+  - `tts.py` already abstracts TTS provider (edge / openai)
 - **Residual**: L=2 × I=2 = 4 — acceptable
 
 ---

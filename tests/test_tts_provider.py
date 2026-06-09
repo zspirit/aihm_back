@@ -4,17 +4,17 @@ Couvre :
 - Factory `get_tts_provider` : valid/invalid names, default from settings
 - Sélection via env var `TTS_PROVIDER`
 - OpenAI provider : raise TTSError if `OPENAI_API_KEY` missing
-- ElevenLabs provider : raise TTSError if `ELEVENLABS_API_KEY` missing
 - Speed conversion ("-5%" → 0.95) pour OpenAI
 - Edge provider : génération réelle (lib edge-tts est offline-friendly, pas
   d'API call externe)
+
+ElevenLabs intentionally NOT tested — provider not supported (user pref).
 
 Note : on ne teste pas la qualité audio (impossible sans écoute humaine),
 seulement les contrats d'interface.
 """
 from __future__ import annotations
 
-import os
 from unittest.mock import patch
 
 import pytest
@@ -23,7 +23,6 @@ from app.services import tts as tts_module
 from app.services.tts import (
     DEFAULT_VOICE_BY_PROVIDER,
     EdgeTTSProvider,
-    ElevenLabsTTSProvider,
     OpenAITTSProvider,
     TTSError,
     get_tts_provider,
@@ -45,7 +44,12 @@ def test_factory_returns_edge_by_default(monkeypatch):
 def test_factory_explicit_name():
     assert get_tts_provider("edge").name == "edge"
     assert get_tts_provider("openai").name == "openai"
-    assert get_tts_provider("elevenlabs").name == "elevenlabs"
+
+
+def test_factory_rejects_elevenlabs():
+    """ElevenLabs provider intentionally not registered — see CLAUDE memory."""
+    with pytest.raises(ValueError, match="Unknown TTS_PROVIDER"):
+        get_tts_provider("elevenlabs")
 
 
 def test_factory_invalid_name_raises():
@@ -64,10 +68,11 @@ def test_factory_reads_settings_when_no_arg(monkeypatch):
 
 
 def test_default_voice_mapping_complete():
-    """Chaque provider doit avoir une voix par défaut configurée."""
-    for name in ("edge", "openai", "elevenlabs"):
+    """Chaque provider supporté doit avoir une voix par défaut configurée."""
+    for name in ("edge", "openai"):
         assert name in DEFAULT_VOICE_BY_PROVIDER
         assert DEFAULT_VOICE_BY_PROVIDER[name], f"voice empty for {name}"
+    assert "elevenlabs" not in DEFAULT_VOICE_BY_PROVIDER
 
 
 # ─── OpenAI provider ───────────────────────────────────────────────────────
@@ -148,51 +153,6 @@ async def test_openai_speed_clamp(monkeypatch):
     with patch("httpx.AsyncClient", _FakeAsyncClient):
         await provider.synthesize("X", rate="+500%")  # would be 6.0, must clamp to 2.0
     assert captured["json"]["speed"] == 2.0
-
-
-# ─── ElevenLabs provider ───────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_elevenlabs_raises_without_api_key(monkeypatch):
-    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
-    provider = ElevenLabsTTSProvider()
-    with pytest.raises(TTSError, match="ELEVENLABS_API_KEY missing"):
-        await provider.synthesize("Bonjour")
-
-
-@pytest.mark.asyncio
-async def test_elevenlabs_default_voice(monkeypatch):
-    """Si voice=None, utilise la voix Charlie par défaut."""
-    monkeypatch.setenv("ELEVENLABS_API_KEY", "el-test-fake")
-    provider = ElevenLabsTTSProvider()
-    captured: dict = {}
-
-    class _FakeResponse:
-        content = b"\xff\xfbfake"
-
-        def raise_for_status(self):
-            pass
-
-    class _FakeAsyncClient:
-        def __init__(self, *a, **kw):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return None
-
-        async def post(self, url, headers=None, json=None):
-            captured["url"] = url
-            return _FakeResponse()
-
-    with patch("httpx.AsyncClient", _FakeAsyncClient):
-        await provider.synthesize("Bonjour", voice=None)
-
-    # default voice ID Charlie présent dans l'URL
-    assert DEFAULT_VOICE_BY_PROVIDER["elevenlabs"] in captured["url"]
 
 
 # ─── Edge provider (lib offline) ──────────────────────────────────────────

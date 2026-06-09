@@ -38,7 +38,8 @@ organisations, auditors and regulators.
     scorecard synthesis
   - OpenAI Whisper v3 — speech-to-text (running via Twilio)
   - Edge-TTS (Henri Neural) — default text-to-speech (no transfer outside the EU)
-  - Optional: OpenAI tts-1 / ElevenLabs Turbo v2.5 if `TTS_PROVIDER` is changed
+  - Optional: OpenAI tts-1 nova FR if `TTS_PROVIDER=openai` (used when
+    streaming TTS becomes necessary for VOICE-07)
 - **Persona**: "Léa", explicitly disclosed as AI at call start and end
   (EU AI Act Art. 50)
 - **Decision power**: produces a scorecard; never auto-progresses or rejects

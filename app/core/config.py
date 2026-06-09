@@ -52,9 +52,10 @@ class Settings(BaseSettings):
     WHISPER_COMPUTE_TYPE: str = "int8"
 
     # TTS (Conversation)
-    # `TTS_PROVIDER` sélectionne le backend : "edge" (default, gratuit),
-    # "openai" (nova FR, requires OPENAI_API_KEY), "elevenlabs"
-    # (requires ELEVENLABS_API_KEY). Voir app/services/tts.py.
+    # `TTS_PROVIDER` sélectionne le backend : "edge" (default, gratuit) ou
+    # "openai" (nova FR, requires OPENAI_API_KEY, supports streaming for
+    # VOICE-07). ElevenLabs intentionally NOT supported — see CLAUDE memory
+    # `feedback-no-elevenlabs`.
     TTS_PROVIDER: str = "edge"
     TTS_VOICE: str = "fr-FR-HenriNeural"  # default voice for "edge" provider
     TTS_BUCKET: str = "tts-audio"
@@ -63,7 +64,13 @@ class Settings(BaseSettings):
 
     # API keys for paid TTS providers (optional — only set when used)
     OPENAI_API_KEY: str = ""
-    ELEVENLABS_API_KEY: str = ""
+
+    # STT streaming providers (VOICE-06) — only ONE is used at runtime,
+    # selected by STT_STREAMING_PROVIDER. Default = "twilio_gather" keeps
+    # the current batch-style flow until VOICE-06 lands.
+    STT_STREAMING_PROVIDER: str = "twilio_gather"  # "deepgram" | "assemblyai" | "twilio_gather"
+    DEEPGRAM_API_KEY: str = ""
+    ASSEMBLYAI_API_KEY: str = ""
 
     # Safety Classifier (Conversation)
     SAFETY_MODEL: str = "claude-haiku-4-5-20251001"

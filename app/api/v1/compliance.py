@@ -76,8 +76,10 @@ des personnes physiques par décisions automatisées au sens de l'Art. 22).
 ### 1.4 Sous-traitants
 - Anthropic (USA) — modèles Claude pour scoring/conversation. Encadré par
   clauses contractuelles types (SCC) UE 2021.
-- OpenAI / ElevenLabs — synthèse vocale facultative selon configuration
-  TTS_PROVIDER (par défaut : edge-tts, sans transfert hors UE).
+- OpenAI — synthèse vocale facultative (`TTS_PROVIDER=openai`, voix nova FR).
+  Par défaut : edge-tts, sans transfert hors UE.
+- Deepgram / AssemblyAI (optionnel) — STT streaming temps réel pour
+  l'entretien (encadré par SCC EU 2021). Par défaut : Twilio Gather.
 - Twilio — passerelle téléphonique (USA, SCC).
 - Resend — envoi des emails transactionnels (USA, SCC).
 - Hetzner — hébergement infrastructure (Allemagne, UE).

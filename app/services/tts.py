@@ -1,11 +1,14 @@
 """TTS provider adapter — multi-backend abstraction.
 
-Permet de swap entre edge-tts (Microsoft Edge Read Aloud, gratuit), OpenAI TTS
-(nova FR, ~$0.03/interview) et ElevenLabs Turbo v2.5 (Charlie/Antoine FR,
-~$0.10/interview) via la variable d'environnement `TTS_PROVIDER`.
+Permet de swap entre edge-tts (Microsoft Edge Read Aloud, gratuit) et
+OpenAI TTS (nova FR, ~$0.03/interview, supporte le streaming pour VOICE-07)
+via la variable d'environnement `TTS_PROVIDER`.
+
+ElevenLabs a été explicitement écarté (préférence utilisateur — pricing
+hors cible v1.0). Ne pas le réintroduire ici.
 
 Sélection runtime :
-    settings.TTS_PROVIDER in {"edge", "openai", "elevenlabs"}
+    settings.TTS_PROVIDER in {"edge", "openai"}
 
 Chaque provider implémente `TTSProvider.synthesize(text, voice, rate) -> bytes`
 qui retourne un MP3 prêt à uploader sur MinIO.
@@ -15,7 +18,6 @@ décisions de refonte voice IA (release v1.0, ticket VOICE-02).
 """
 from __future__ import annotations
 
-import asyncio
 import io
 import os
 from abc import ABC, abstractmethod
@@ -32,9 +34,8 @@ logger = structlog.get_logger()
 # Mapping logique : "default FR" → identifiant spécifique provider.
 # Permet de basculer de provider sans renommer le code applicatif.
 DEFAULT_VOICE_BY_PROVIDER: dict[str, str] = {
-    "edge": "fr-FR-HenriNeural",          # Microsoft Edge Read Aloud (gratuit)
-    "openai": "nova",                      # OpenAI tts-1 — meilleure voix FR
-    "elevenlabs": "IKne3meq5aSn9XLyUdCD",  # ElevenLabs "Charlie" multilingual
+    "edge": "fr-FR-HenriNeural",   # Microsoft Edge Read Aloud (gratuit)
+    "openai": "nova",               # OpenAI tts-1 — meilleure voix FR
 }
 
 
@@ -43,7 +44,7 @@ DEFAULT_VOICE_BY_PROVIDER: dict[str, str] = {
 class TTSProvider(ABC):
     """Interface abstraite pour un provider TTS."""
 
-    name: str  # identifiant ("edge", "openai", "elevenlabs")
+    name: str  # identifiant ("edge", "openai")
 
     @abstractmethod
     async def synthesize(
@@ -114,6 +115,9 @@ class OpenAITTSProvider(TTSProvider):
     en français selon nos tests. Pricing 2026 : $15/1M chars (tts-1) ou
     $30/1M (tts-1-hd). Coût par interview 5min ~$0.03 (tts-1) ou ~$0.06 (hd).
 
+    Supporte le streaming HTTP (chunked) — utile pour VOICE-07 quand on
+    branchera Claude streaming + TTS streaming sur Twilio Media Streams.
+
     Requiert `OPENAI_API_KEY` dans l'environnement. Si absent, raise au premier
     appel (pas au constructor → fail-fast logique).
     """
@@ -172,80 +176,11 @@ class OpenAITTSProvider(TTSProvider):
             raise TTSError(f"OpenAI TTS failed: {exc}") from exc
 
 
-# ─── Adapter 3: ElevenLabs (Turbo v2.5, ~$0.10/interview 5min) ──────────────
-
-class ElevenLabsTTSProvider(TTSProvider):
-    """ElevenLabs Turbo v2.5 multilingual. Voix Charlie (`IKne3meq5aSn9XLyUdCD`)
-    et Antoine recommandées pour le FR. Pricing variable selon plan ; à volume
-    test (~200 entretiens/mois) : Free tier 10K chars/mois gratuits suffit pour
-    démarrer, sinon Creator $22/mo pour 100K chars.
-
-    Requiert `ELEVENLABS_API_KEY`. Stream API en POST pour latence minimale.
-    """
-
-    name = "elevenlabs"
-
-    def __init__(self, model_id: str = "eleven_turbo_v2_5") -> None:
-        self.model_id = model_id
-
-    async def synthesize(
-        self,
-        text: str,
-        voice: Optional[str] = None,
-        rate: str = "-5%",
-    ) -> bytes:
-        import httpx
-
-        api_key = os.environ.get("ELEVENLABS_API_KEY", "").strip()
-        if not api_key:
-            raise TTSError("ELEVENLABS_API_KEY missing — cannot use ElevenLabsTTSProvider")
-
-        voice = voice or DEFAULT_VOICE_BY_PROVIDER["elevenlabs"]
-
-        # ElevenLabs ne supporte pas de `rate` direct ; le speech speed se
-        # gère via les voice_settings (stability + similarity_boost). On garde
-        # un default conservateur pour ne pas surprendre l'auditeur.
-        payload = {
-            "text": text,
-            "model_id": self.model_id,
-            "voice_settings": {
-                "stability": 0.5,
-                "similarity_boost": 0.75,
-                "style": 0.0,
-                "use_speaker_boost": True,
-            },
-        }
-
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(
-                    f"https://api.elevenlabs.io/v1/text-to-speech/{voice}",
-                    headers={
-                        "xi-api-key": api_key,
-                        "Accept": "audio/mpeg",
-                        "Content-Type": "application/json",
-                    },
-                    json=payload,
-                )
-                resp.raise_for_status()
-                return resp.content
-        except httpx.HTTPError as exc:
-            logger.error(
-                "tts_elevenlabs_error",
-                text_len=len(text),
-                voice=voice,
-                model_id=self.model_id,
-                error=str(exc),
-            )
-            raise TTSError(f"ElevenLabs TTS failed: {exc}") from exc
-
-
 # ─── Factory ───────────────────────────────────────────────────────────────
 
 _PROVIDERS: dict[str, type[TTSProvider]] = {
     "edge": EdgeTTSProvider,
     "openai": OpenAITTSProvider,
-    "elevenlabs": ElevenLabsTTSProvider,
 }
 
 
@@ -300,10 +235,10 @@ async def synthesize_all_providers(
     """Génère le même texte avec TOUS les providers configurables.
 
     Utilisé par VOICE-03c pour A/B test : générer la même phrase via edge /
-    openai / elevenlabs, sauvegarder les 3 MP3 et écouter pour décider.
+    openai, sauvegarder les 2 MP3 et écouter pour décider.
 
     Skip silencieusement les providers dont la clé API est absente
-    (ex: pas d'OPENAI_API_KEY → on génère juste edge + elevenlabs).
+    (ex: pas d'OPENAI_API_KEY → on génère juste edge).
     """
     voice_overrides = voice_overrides or {}
     results: dict[str, bytes] = {}
