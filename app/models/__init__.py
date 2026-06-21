@@ -27,6 +27,26 @@ from app.models.shortlist import Shortlist, ShortlistCandidate
 from app.models.skill import Skill
 from app.models.task import Task
 from app.models.psychometric import PsychometricAssessment
+# Platform layer (modular monolith) — see ADR-05
+from app.models.party import Party, PartyFacet
+from app.models.entitlement import TenantEntitlement
+from app.models.domain_event import DomainEvent
+# Timesheet (Kairos) module domain — see KAIROS_INTEGRATION_PLAN.md
+from app.modules.timesheet.models import (
+    TsClient,
+    TsProject,
+    TsConsultant,
+    TsMission,
+    TsCraMonth,
+    TsInvoice,
+    TsTimeEntry,
+    TsDocument,
+    TsTimesheet,
+    TsExpense,
+    TsConsultantInvoice,
+    TsContactRequest,
+    TsContactMessage,
+)
 
 __all__ = [
     "Tenant",
@@ -63,4 +83,21 @@ __all__ = [
     "Skill",
     "Task",
     "PsychometricAssessment",
+    "Party",
+    "PartyFacet",
+    "TenantEntitlement",
+    "DomainEvent",
+    "TsClient",
+    "TsProject",
+    "TsConsultant",
+    "TsMission",
+    "TsCraMonth",
+    "TsInvoice",
+    "TsTimeEntry",
+    "TsDocument",
+    "TsTimesheet",
+    "TsExpense",
+    "TsConsultantInvoice",
+    "TsContactRequest",
+    "TsContactMessage",
 ]

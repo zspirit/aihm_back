@@ -30,6 +30,10 @@ if settings.SENTRY_DSN:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("app_startup", version="0.1.0")
+    # Wire composable modules to the platform event bus (ADR-05).
+    from app.platform.bootstrap import register_modules
+
+    register_modules()
     yield
     logger.info("app_shutdown")
 
@@ -136,6 +140,7 @@ from app.api.v1.tasks import router as tasks_router
 from app.api.v1.analytics_advanced import router as analytics_advanced_router
 from app.api.v1.psychometrics import router as psychometrics_router
 from app.api.v1.sourcing import router as sourcing_router
+from app.modules.timesheet.api import router as kairos_router  # Kairos (timesheet) module
 
 app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
 app.include_router(applications_router, prefix=settings.API_V1_PREFIX)
@@ -181,6 +186,7 @@ app.include_router(tasks_router, prefix=settings.API_V1_PREFIX)
 app.include_router(analytics_advanced_router, prefix=settings.API_V1_PREFIX)
 app.include_router(psychometrics_router, prefix=settings.API_V1_PREFIX)
 app.include_router(sourcing_router, prefix=settings.API_V1_PREFIX)
+app.include_router(kairos_router, prefix=settings.API_V1_PREFIX)
 
 
 # --- Health Check enrichi ---
