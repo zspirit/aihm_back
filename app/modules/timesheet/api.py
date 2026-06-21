@@ -938,6 +938,20 @@ async def my_documents(current_user: User = Depends(get_current_user), db: Async
     return [_doc_out(d) for d in rows]
 
 
+async def _purge_consultant_cvs(db: AsyncSession, tenant_id: UUID, consultant_id: UUID) -> None:
+    """Supprime les anciens CV (doc_type='cv') du consultant + leurs fichiers.
+    On ne conserve qu'une seule version du CV (la dernière). N'affecte pas contrats/avenants."""
+    rows = (await db.execute(select(TsDocument).where(
+        TsDocument.tenant_id == tenant_id, TsDocument.entity_type == "consultant",
+        TsDocument.entity_id == consultant_id, TsDocument.doc_type == "cv"))).scalars().all()
+    for d in rows:
+        try:
+            delete_file(d.file_path)
+        except Exception:
+            logger.warning("cv_file_delete_failed")
+        await db.delete(d)
+
+
 @router.post("/me/documents", response_model=DocumentOut, status_code=201)
 async def upload_my_document(
     file: UploadFile = File(...),
@@ -947,6 +961,8 @@ async def upload_my_document(
     db: AsyncSession = Depends(get_db),
 ):
     c = await _me_consultant(db, current_user)
+    if docType == "cv":
+        await _purge_consultant_cvs(db, current_user.tenant_id, c.id)  # garder une seule version
     path = await upload_file(file, "kairos-docs", prefix=f"consultant/{c.id}")
     doc = TsDocument(
         tenant_id=current_user.tenant_id, entity_type="consultant", entity_id=c.id, doc_type=docType,
@@ -1638,8 +1654,9 @@ async def parse_my_cv(file: UploadFile = File(...), tenant_id: UUID = Depends(ge
     content = await file.read()
     text = extract_cv_text(content, file.filename or "")
     parsed = parse_cv_to_profile(text)
-    # attacher le CV au profil
+    # attacher le CV au profil (une seule version : on purge les anciens)
     try:
+        await _purge_consultant_cvs(db, tenant_id, c.id)
         await file.seek(0)
         path = await upload_file(file, "kairos-docs", prefix=f"consultant/{c.id}")
         db.add(TsDocument(
