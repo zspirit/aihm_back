@@ -451,3 +451,35 @@ class MessageIn(BaseModel):
 
 class ContactStatusIn(BaseModel):
     status: str   # open | in_progress | resolved
+
+
+# ---------- Copilot consultant (EPIC L) ----------
+
+class CopilotChatIn(BaseModel):
+    message: str
+
+
+class PendingAction(BaseModel):
+    type: str
+    label: str
+    params: dict = {}
+
+
+class CopilotMsgOut(BaseModel):
+    id: str
+    role: str            # user | assistant
+    content: str
+    createdAt: str
+    tools: list[str] = []
+    pendingAction: PendingAction | None = None
+
+
+class CopilotChatOut(BaseModel):
+    reply: str
+    pendingAction: PendingAction | None = None
+    tools: list[str] = []
+
+
+class CopilotConfirmIn(BaseModel):
+    type: str
+    params: dict = {}

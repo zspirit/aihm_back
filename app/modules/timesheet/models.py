@@ -302,3 +302,19 @@ class TsTimeEntry(Base):
     month: Mapped[str] = mapped_column(String(40))
     value: Mapped[float] = mapped_column(Float, default=1.0)  # 1.0 | 0.5
     source: Mapped[str] = mapped_column(String(20), default="manual")  # manual | timer | ai_suggested
+
+
+class TsCopilotMessage(Base):
+    """Historique de conversation du copilot consultant — scopé tenant + consultant.
+
+    ``meta`` conserve la trace (outils appelés, action proposée) pour audit/affichage.
+    """
+    __tablename__ = "ts_copilot_messages"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"))
+    consultant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("ts_consultants.id"))
+    role: Mapped[str] = mapped_column(String(20))  # user | assistant
+    content: Mapped[str] = mapped_column(Text)
+    meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # {tools:[], pendingAction:{}}
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

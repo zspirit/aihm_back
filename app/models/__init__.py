@@ -46,6 +46,7 @@ from app.modules.timesheet.models import (
     TsConsultantInvoice,
     TsContactRequest,
     TsContactMessage,
+    TsCopilotMessage,
 )
 
 __all__ = [
@@ -100,4 +101,5 @@ __all__ = [
     "TsConsultantInvoice",
     "TsContactRequest",
     "TsContactMessage",
+    "TsCopilotMessage",
 ]

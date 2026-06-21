@@ -28,6 +28,7 @@ from app.modules.timesheet.models import (
     TsConsultantInvoice,
     TsContactMessage,
     TsContactRequest,
+    TsCopilotMessage,
     TsCraMonth,
     TsDocument,
     TsExpense,
@@ -57,6 +58,10 @@ from app.modules.timesheet.schemas import (
     MessageOut,
     ExpenseIn,
     ExpenseOut,
+    CopilotChatIn,
+    CopilotChatOut,
+    CopilotMsgOut,
+    PendingAction,
     Summary360,
     CraDay,
     CraGridIn,
@@ -81,6 +86,7 @@ from app.modules.timesheet.schemas import (
 )
 from app.modules.timesheet.dossier import build_dossier_docx, build_dossier_pdf
 from app.modules.timesheet.cv_parse import extract_cv_text, parse_cv_to_profile
+from app.modules.timesheet.copilot import run_turn as copilot_run_turn, check_rate_limit as copilot_rate_limit
 
 # CRA détaillé — catalogues
 _MONTHS_FR = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin",
@@ -1788,3 +1794,61 @@ async def set_contact_status(req_id: UUID, body: ContactStatusIn, tenant_id: UUI
     await db.commit()
     ctx = await _load_ctx(db, tenant_id)
     return _contact_out(r, ctx, await _msgs(db, r.id))
+
+
+# ============================ Copilot consultant (EPIC L) ============================
+# Sécurité : voir app/modules/timesheet/copilot.py et CONSULTANT_COPILOT_DESIGN.md.
+# Lecture seule côté modèle ; les actions proposées sont confirmées par l'utilisateur
+# via les endpoints normaux (submit CRA, créer frais, contact, dossier).
+
+def _copilot_msg_out(m: TsCopilotMessage) -> CopilotMsgOut:
+    meta = m.meta or {}
+    pa = meta.get("pendingAction")
+    return CopilotMsgOut(
+        id=str(m.id), role=m.role, content=m.content,
+        createdAt=m.created_at.isoformat(), tools=meta.get("tools") or [],
+        pendingAction=PendingAction(**pa) if pa else None,
+    )
+
+
+@router.get("/me/copilot/history", response_model=list[CopilotMsgOut])
+async def copilot_history(tenant_id: UUID = Depends(get_tenant_id), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    c = await _me_consultant(db, current_user)
+    rows = (await db.execute(
+        select(TsCopilotMessage).where(TsCopilotMessage.tenant_id == tenant_id, TsCopilotMessage.consultant_id == c.id).order_by(TsCopilotMessage.created_at)
+    )).scalars().all()
+    return [_copilot_msg_out(m) for m in rows[-50:]]
+
+
+@router.delete("/me/copilot/history", status_code=204)
+async def copilot_clear_history(tenant_id: UUID = Depends(get_tenant_id), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    c = await _me_consultant(db, current_user)
+    rows = (await db.execute(select(TsCopilotMessage).where(TsCopilotMessage.tenant_id == tenant_id, TsCopilotMessage.consultant_id == c.id))).scalars().all()
+    for m in rows:
+        await db.delete(m)
+    await db.commit()
+
+
+@router.post("/me/copilot/chat", response_model=CopilotChatOut)
+async def copilot_chat(body: CopilotChatIn, tenant_id: UUID = Depends(get_tenant_id), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    c = await _me_consultant(db, current_user)
+    msg = (body.message or "").strip()
+    if not msg:
+        raise HTTPException(status_code=400, detail="Message vide.")
+    if not copilot_rate_limit(c.id):
+        raise HTTPException(status_code=429, detail="Trop de messages — réessayez dans une minute.")
+
+    hist_rows = (await db.execute(
+        select(TsCopilotMessage).where(TsCopilotMessage.tenant_id == tenant_id, TsCopilotMessage.consultant_id == c.id).order_by(TsCopilotMessage.created_at)
+    )).scalars().all()
+    history = [{"role": m.role, "content": m.content} for m in hist_rows]
+
+    db.add(TsCopilotMessage(tenant_id=tenant_id, consultant_id=c.id, role="user", content=msg))
+    result = await copilot_run_turn(db, tenant_id, c, history, msg)
+    db.add(TsCopilotMessage(
+        tenant_id=tenant_id, consultant_id=c.id, role="assistant", content=result["reply"],
+        meta={"tools": result.get("tools") or [], "pendingAction": result.get("pendingAction")},
+    ))
+    await db.commit()
+    pa = result.get("pendingAction")
+    return CopilotChatOut(reply=result["reply"], pendingAction=PendingAction(**pa) if pa else None, tools=result.get("tools") or [])
