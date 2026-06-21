@@ -147,6 +147,24 @@ async def move_candidate(
         },
     )
 
+    # Platform seam (ADR-05): a hire becomes a consultant in the timesheet
+    # module via the event bus — only if that tenant has it entitled.
+    if body.new_status == "hired":
+        from app.platform.events import event_bus
+
+        await event_bus.emit(
+            "ats.candidate.hired",
+            payload={
+                "candidate_id": str(candidate.id),
+                "name": candidate.name,
+                "email": candidate.email,
+                "position_id": str(candidate.position_id) if candidate.position_id else None,
+            },
+            db=db,
+            tenant_id=tenant_id,
+            source_module="ats",
+        )
+
     await db.commit()
 
     logger.info(
